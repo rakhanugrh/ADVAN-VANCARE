@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const multer = require('multer');
+const crypto = require('crypto');
 
 const { uploadFileToDrive } = require('./config/googleDrive');
 const { sendClaimReceivedEmail, sendClaimApprovalEmail, sendClaimRejectionEmail } = require('./config/mailer');
@@ -63,6 +64,26 @@ function generateTicketNumber() {
 }
 
 // ===============================================
+// SISTEM AUTENTIKASI ADMIN
+// ===============================================
+
+const adminTokens = new Map(); // token -> { username, createdAt }
+
+// Middleware: Validasi token admin
+function requireAdminAuth(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: Token tidak ditemukan.' });
+  }
+  const token = auth.slice(7);
+  if (!adminTokens.has(token)) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: Token tidak valid atau sudah kadaluarsa.' });
+  }
+  req.adminUser = adminTokens.get(token);
+  next();
+}
+
+// ===============================================
 // ROUTE HALAMAN UTAMA & ADMIN
 // ===============================================
 
@@ -71,9 +92,54 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Halaman Dashboard Admin
+// Halaman Login Admin
+app.get('/login', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Halaman Dashboard Admin (proteksi client-side via JS di admin.html)
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
+});
+
+// API: Login Admin
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const validUser = process.env.ADMIN_USERNAME || 'admin';
+  const validPass = process.env.ADMIN_PASSWORD || 'admin123';
+
+  if (username === validUser && password === validPass) {
+    const token = crypto.randomBytes(32).toString('hex');
+    adminTokens.set(token, { username, createdAt: Date.now() });
+    console.log(`[Auth] Login berhasil: ${username}`);
+    return res.json({ success: true, token, user: { username } });
+  }
+  console.log(`[Auth] Login gagal: ${username}`);
+  return res.status(401).json({ success: false, message: 'Username atau password salah.' });
+});
+
+// API: Verifikasi Token
+app.get('/api/auth/verify', (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return res.json({ success: true, valid: false });
+  }
+  const token = auth.slice(7);
+  const session = adminTokens.get(token);
+  if (!session) return res.json({ success: true, valid: false });
+  return res.json({ success: true, valid: true, user: { username: session.username } });
+});
+
+// API: Logout Admin
+app.post('/api/auth/logout', (req, res) => {
+  const auth = req.headers.authorization;
+  if (auth && auth.startsWith('Bearer ')) {
+    const token = auth.slice(7);
+    const session = adminTokens.get(token);
+    if (session) console.log(`[Auth] Logout: ${session.username}`);
+    adminTokens.delete(token);
+  }
+  return res.json({ success: true });
 });
 
 // ===============================================
@@ -197,7 +263,7 @@ app.post('/api/claims', upload.fields([
  * Ambil daftar semua klaim untuk Dashboard Admin.
  * Mendukung filter status (?status=PENDING / APPROVED) & pencarian (?search=keyword)
  */
-app.get('/api/claims', async (req, res) => {
+app.get('/api/claims', requireAdminAuth, async (req, res) => {
   try {
     const { status, search } = req.query;
     let claims = await getAllClaims({ status });
@@ -231,7 +297,7 @@ app.get('/api/claims', async (req, res) => {
  * 3. GET /api/claims/:id
  * Detail klaim berdasarkan ID atau Nomor Tiket
  */
-app.get('/api/claims/:id', async (req, res) => {
+app.get('/api/claims/:id', requireAdminAuth, async (req, res) => {
   try {
     const claim = await getClaimById(req.params.id);
     if (!claim) {
@@ -257,7 +323,7 @@ app.get('/api/claims/:id', async (req, res) => {
  * TOMBOL "SEKALI KLIK APPROVE"
  * Mengubah status klaim menjadi APPROVED dan mengirim email instruksi servis resmi ke pelanggan
  */
-app.post('/api/claims/:id/approve', async (req, res) => {
+app.post('/api/claims/:id/approve', requireAdminAuth, async (req, res) => {
   try {
     const { notes } = req.body || {};
     const id = req.params.id;
@@ -296,7 +362,7 @@ app.post('/api/claims/:id/approve', async (req, res) => {
  * 5. POST /api/claims/:id/reject
  * Menolak klaim garansi dengan alasan & kirim email notifikasi ke pelanggan
  */
-app.post('/api/claims/:id/reject', async (req, res) => {
+app.post('/api/claims/:id/reject', requireAdminAuth, async (req, res) => {
   try {
     const { reason } = req.body || {};
     const id = req.params.id;
@@ -334,7 +400,7 @@ app.post('/api/claims/:id/reject', async (req, res) => {
  * 6. GET /api/stats
  * Statistik ringkas untuk widget KPI Admin Dashboard
  */
-app.get('/api/stats', async (req, res) => {
+app.get('/api/stats', requireAdminAuth, async (req, res) => {
   try {
     const stats = await getStats();
     return res.json({

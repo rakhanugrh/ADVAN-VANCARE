@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login Admin - VANCARE Advan</title>
+  <!-- Google Fonts: Orbitron & Plus Jakarta Sans -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <!-- SweetAlert2 for alerts -->
+  <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+            advan: ['Orbitron', 'sans-serif']
+          },
+          colors: {
+            advan: {
+              pink: '#e6007e',
+              'pink-hover': '#cc006f',
+              dark: '#090a0f',
+              card: '#12141e',
+              input: '#181b28',
+              border: '#232738'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .dark-card {
+      background: #12141e;
+      border: 1px solid #232738;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+    }
+  </style>
+</head>
+<body class="bg-[#090a0f] text-zinc-100 font-sans antialiased min-h-screen flex flex-col justify-between items-center p-4">
+
+  <!-- Top Simple Bar -->
+  <div class="w-full max-w-md pt-4 flex justify-between items-center text-xs text-zinc-500">
+    <a href="/" class="hover:text-advan-pink transition flex items-center gap-1.5">
+      <i class="fa-solid fa-arrow-left text-[10px]"></i>
+      <span>Kembali ke Form Pelanggan</span>
+    </a>
+    <span class="text-[11px] text-zinc-600">VANCARE v1.0</span>
+  </div>
+
+  <!-- Login Card Container -->
+  <div class="w-full max-w-md my-auto py-6">
+    <div class="dark-card rounded-2xl p-6 sm:p-8">
+      
+      <!-- Logo & Brand Header -->
+      <div class="text-center mb-7">
+        <div class="flex justify-center items-center mb-3">
+          <img src="/images/advan-header.png" alt="Logo ADVAN" class="h-14 sm:h-16 w-auto object-contain filter drop-shadow-[0_4px_15px_rgba(230,0,126,0.25)]">
+        </div>
+        <h1 class="font-advan text-2xl font-black tracking-[0.16em] text-white">
+          VAN<span class="text-advan-pink">CARE</span>
+        </h1>
+        <p class="text-xs text-zinc-400 font-medium tracking-wide mt-1">
+          Portal Masuk Dashboard Petugas & Teknisi
+        </p>
+      </div>
+
+      <!-- Login Form -->
+      <form id="loginForm" class="space-y-4">
+        
+        <!-- Username Input -->
+        <div>
+          <label class="block text-xs font-semibold text-zinc-300 uppercase mb-1.5">
+            Username <span class="text-advan-pink">*</span>
+          </label>
+          <div class="relative">
+            <i class="fa-regular fa-user absolute left-3.5 top-3.5 text-zinc-500 text-xs"></i>
+            <input type="text" id="username" name="username" required autocomplete="username" placeholder="Masukkan username admin"
+              class="w-full pl-9 pr-3 py-2.5 rounded-xl bg-[#181b28] border border-[#2b3044] focus:ring-1 focus:ring-advan-pink focus:border-advan-pink text-xs text-white placeholder-zinc-500 outline-none transition">
+          </div>
+        </div>
+
+        <!-- Password Input -->
+        <div>
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="block text-xs font-semibold text-zinc-300 uppercase">
+              Password <span class="text-advan-pink">*</span>
+            </label>
+          </div>
+          <div class="relative">
+            <i class="fa-solid fa-lock absolute left-3.5 top-3.5 text-zinc-500 text-xs"></i>
+            <input type="password" id="password" name="password" required autocomplete="current-password" placeholder="Masukkan password"
+              class="w-full pl-9 pr-10 py-2.5 rounded-xl bg-[#181b28] border border-[#2b3044] focus:ring-1 focus:ring-advan-pink focus:border-advan-pink text-xs text-white placeholder-zinc-500 outline-none transition">
+            <button type="button" id="togglePasswordBtn" class="absolute right-3 top-3 text-zinc-500 hover:text-zinc-300 text-xs p-1">
+              <i class="fa-regular fa-eye" id="toggleEyeIcon"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="pt-2">
+          <button type="submit" id="submitBtn"
+            class="w-full bg-advan-pink hover:bg-advan-pink-hover text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-pink-500/20 transition flex items-center justify-center gap-2 text-xs uppercase tracking-wider">
+            <i class="fa-solid fa-right-to-bracket text-xs"></i>
+            <span>Masuk ke Dashboard</span>
+          </button>
+        </div>
+
+      </form>
+
+      <!-- Default Credentials Hint -->
+      <div class="mt-6 pt-5 border-t border-[#1f2233] text-center">
+        <div class="inline-block bg-[#161824] border border-[#252a3d] px-3.5 py-2 rounded-xl text-[11px] text-zinc-400">
+          <span class="text-zinc-500 block mb-0.5">Kredensial Default:</span>
+          Username: <strong class="text-zinc-200">admin</strong> &bull; Password: <strong class="text-zinc-200">admin123</strong>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Simple Footer -->
+  <footer class="w-full text-center text-[11px] text-zinc-600 pb-4">
+    &copy; 2026 Advan Indonesia. VANCARE Warranty Management System.
+  </footer>
+
+  <script>
+    // Cek jika sudah login sebelumnya, langsung arahkan ke /admin
+    const existingToken = localStorage.getItem('vancare_admin_token');
+    if (existingToken) {
+      fetch('/api/auth/verify', {
+        headers: { 'Authorization': 'Bearer ' + existingToken }
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success && data.valid) {
+          window.location.replace('/admin');
+        } else {
+          localStorage.removeItem('vancare_admin_token');
+          localStorage.removeItem('vancare_admin_user');
+        }
+      })
+      .catch(() => {});
+    }
+
+    // Toggle Show/Hide Password
+    const passwordInput = document.getElementById('password');
+    const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+    const toggleEyeIcon = document.getElementById('toggleEyeIcon');
+
+    togglePasswordBtn.addEventListener('click', () => {
+      const isPassword = passwordInput.type === 'password';
+      passwordInput.type = isPassword ? 'text' : 'password';
+      toggleEyeIcon.className = isPassword ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye';
+    });
+
+    // Form Submit Handler
+    const form = document.getElementById('loginForm');
+    const submitBtn = document.getElementById('submitBtn');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      if (!username || !password) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'Lengkapi Data',
+          text: 'Harap masukkan username dan password.',
+          background: '#12141e',
+          color: '#ffffff',
+          confirmButtonColor: '#e6007e'
+        });
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `
+        <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+        </svg>
+        <span>Memverifikasi...</span>
+      `;
+
+      try {
+        const response = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+          localStorage.setItem('vancare_admin_token', result.token);
+          localStorage.setItem('vancare_admin_user', JSON.stringify(result.user));
+
+          Swal.fire({
+            icon: 'success',
+            title: 'Login Berhasil',
+            text: 'Selamat datang di Dashboard Admin VANCARE.',
+            background: '#12141e',
+            color: '#ffffff',
+            showConfirmButton: false,
+            timer: 1200
+          });
+
+          setTimeout(() => {
+            window.location.replace('/admin');
+          }, 1200);
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Login Gagal',
+            text: result.message || 'Username atau password yang Anda masukkan salah.',
+            background: '#12141e',
+            color: '#ffffff',
+            confirmButtonColor: '#e6007e'
+          });
+        }
+      } catch (err) {
+        Swal.fire({
+          icon: 'error',
+          title: 'Kesalahan Koneksi',
+          text: 'Tidak dapat menghubungi server: ' + err.message,
+          background: '#12141e',
+          color: '#ffffff',
+          confirmButtonColor: '#e6007e'
+        });
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `
+          <i class="fa-solid fa-right-to-bracket text-xs"></i>
+          <span>Masuk ke Dashboard</span>
+        `;
+      }
+    });
+  </script>
+</body>
+</html>

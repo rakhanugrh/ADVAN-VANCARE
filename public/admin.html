@@ -60,6 +60,11 @@
 
       <!-- Action Kanan -->
       <div class="flex items-center space-x-3">
+        <span class="text-xs text-zinc-400 hidden sm:flex items-center gap-1.5">
+          <i class="fa-solid fa-circle-user text-zinc-500"></i>
+          <span id="adminUsername">Admin</span>
+        </span>
+        <div class="h-4 w-px bg-zinc-700 hidden sm:block"></div>
         <a href="/" target="_blank" class="text-xs text-slate-300 hover:text-white px-3 py-1.5 rounded-md hover:bg-slate-800 transition flex items-center gap-1.5">
           <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
           <span>Form Pelanggan</span>
@@ -67,6 +72,10 @@
         <button id="refreshBtn" onclick="loadClaimsData()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-3 py-1.5 rounded-md transition flex items-center gap-1.5 border border-slate-700">
           <i class="fa-solid fa-rotate text-[11px]" id="refreshIcon"></i>
           <span>Refresh</span>
+        </button>
+        <button onclick="doLogout()" class="text-xs bg-rose-900/40 hover:bg-rose-900/70 text-rose-300 px-3 py-1.5 rounded-md border border-rose-800/50 transition flex items-center gap-1.5">
+          <i class="fa-solid fa-right-from-bracket text-[10px]"></i>
+          <span>Logout</span>
         </button>
       </div>
 
@@ -201,19 +210,67 @@
     let currentFilter = 'ALL';
     let searchQuery = '';
 
-    document.addEventListener('DOMContentLoaded', () => {
+    document.addEventListener('DOMContentLoaded', async () => {
+      // --- AUTH GUARD ---
+      const token = localStorage.getItem('vancare_admin_token');
+      if (!token) {
+        window.location.replace('/login');
+        return;
+      }
+      try {
+        const verifyRes = await fetch('/api/auth/verify', {
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyData.success || !verifyData.valid) {
+          localStorage.removeItem('vancare_admin_token');
+          localStorage.removeItem('vancare_admin_user');
+          window.location.replace('/login');
+          return;
+        }
+        // Tampilkan username di header
+        const userStr = localStorage.getItem('vancare_admin_user');
+        if (userStr) {
+          try {
+            const user = JSON.parse(userStr);
+            if (user.username) document.getElementById('adminUsername').textContent = user.username;
+          } catch(e) {}
+        }
+      } catch (e) {
+        window.location.replace('/login');
+        return;
+      }
+      // Auth OK — muat data
       loadClaimsData();
     });
+
+    // Fungsi Logout
+    async function doLogout() {
+      const token = localStorage.getItem('vancare_admin_token');
+      try {
+        await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token }
+        });
+      } catch(e) {}
+      localStorage.removeItem('vancare_admin_token');
+      localStorage.removeItem('vancare_admin_user');
+      window.location.replace('/login');
+    }
+
+    function getAuthHeader() {
+      return { 'Authorization': 'Bearer ' + (localStorage.getItem('vancare_admin_token') || '') };
+    }
 
     async function loadClaimsData() {
       const refreshIcon = document.getElementById('refreshIcon');
       refreshIcon.classList.add('fa-spin');
 
       try {
-        const resClaims = await fetch('/api/claims');
+        const resClaims = await fetch('/api/claims', { headers: getAuthHeader() });
         const dataClaims = await resClaims.json();
 
-        const resStats = await fetch('/api/stats');
+        const resStats = await fetch('/api/stats', { headers: getAuthHeader() });
         const dataStats = await resStats.json();
 
         if (dataClaims.success) {
@@ -454,7 +511,7 @@
       try {
         const response = await fetch(`/api/claims/${claimId}/reject`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
           body: JSON.stringify({ reason: reason.trim() })
         });
 
@@ -510,7 +567,7 @@
       try {
         const response = await fetch(`/api/claims/${claimId}/approve`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getAuthHeader() },
           body: JSON.stringify({ notes: 'Disetujui Admin VANCARE' })
         });
 
