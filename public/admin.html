@@ -333,12 +333,14 @@
         }) : '-';
 
         return `
-          <tr class="hover:bg-slate-50 transition border-b border-slate-100">
+          <tr onclick="handleRowClick(event, '${c.id}')"
+            class="hover:bg-pink-50/20 cursor-pointer transition border-b border-slate-100 group"
+            title="Klik baris untuk melihat detail rincian klaim #${c.ticket_number}">
             <!-- No Tiket -->
             <td class="py-3 px-4">
-              <div class="flex items-center gap-1 font-semibold text-slate-900">
+              <div class="flex items-center gap-1 font-semibold text-slate-900 group-hover:text-brand-pink transition-colors">
                 <span>${c.ticket_number}</span>
-                <button onclick="copyToClipboard('${c.ticket_number}')" title="Salin" class="text-slate-400 hover:text-slate-600 p-0.5">
+                <button onclick="event.stopPropagation(); copyToClipboard('${c.ticket_number}')" title="Salin" class="text-slate-400 hover:text-slate-600 p-0.5">
                   <i class="fa-regular fa-copy text-[11px]"></i>
                 </button>
               </div>
@@ -365,6 +367,7 @@
               <p class="truncate text-slate-600" title="${escapeHtml(c.issue_description)}">
                 ${escapeHtml(c.issue_description)}
               </p>
+              <span class="text-[10px] text-brand-pink font-semibold group-hover:underline">Klik untuk baca selengkapnya &rarr;</span>
             </td>
 
             <!-- Media -->
@@ -381,14 +384,14 @@
             <td class="py-3 px-4 text-center">
               <div class="flex items-center justify-center gap-1.5">
                 ${isPending ? `
-                  <button onclick="oneClickApprove('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
+                  <button onclick="event.stopPropagation(); oneClickApprove('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
                     id="approveBtn_${c.id}"
                     class="bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1 shadow-xs">
                     <i class="fa-solid fa-check text-[10px]"></i>
                     <span>Approve</span>
                   </button>
 
-                  <button onclick="rejectClaimModal('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
+                  <button onclick="event.stopPropagation(); rejectClaimModal('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
                     id="rejectBtn_${c.id}"
                     class="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1"
                     title="Tolak Pengajuan Klaim">
@@ -405,7 +408,7 @@
                   </span>
                 `}
 
-                <button onclick="showDetail('${c.id}')" class="text-slate-500 hover:text-slate-800 px-2 py-1 rounded hover:bg-slate-100 transition text-[11px]">
+                <button onclick="event.stopPropagation(); showDetail('${c.id}')" class="text-slate-500 hover:text-slate-800 px-2 py-1 rounded hover:bg-slate-100 transition text-[11px]">
                   Detail
                 </button>
               </div>
@@ -539,6 +542,17 @@
           btn.innerHTML = `<i class="fa-solid fa-check text-[10px]"></i> Approve`;
         }
       }
+    }
+
+    /**
+     * Buka modal rincian saat baris/tulisan di tabel diklik
+     */
+    function handleRowClick(e, claimId) {
+      // Abaikan jika yang diklik adalah tombol tindakan atau link dokumen
+      if (e.target.closest('button') || e.target.closest('a')) {
+        return;
+      }
+      showDetail(claimId);
     }
 
     /**
