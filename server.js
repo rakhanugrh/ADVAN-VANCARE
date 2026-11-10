@@ -5,7 +5,7 @@ const path = require('path');
 const multer = require('multer');
 
 const { uploadFileToDrive } = require('./config/googleDrive');
-const { sendClaimReceivedEmail, sendClaimApprovalEmail } = require('./config/mailer');
+const { sendClaimReceivedEmail, sendClaimApprovalEmail, sendClaimRejectionEmail } = require('./config/mailer');
 const {
   saveClaim,
   getAllClaims,
@@ -294,18 +294,32 @@ app.post('/api/claims/:id/approve', async (req, res) => {
 
 /**
  * 5. POST /api/claims/:id/reject
- * Menolak klaim garansi dengan alasan
+ * Menolak klaim garansi dengan alasan & kirim email notifikasi ke pelanggan
  */
 app.post('/api/claims/:id/reject', async (req, res) => {
   try {
     const { reason } = req.body || {};
     const id = req.params.id;
 
+    console.log(`[Admin API] Memproses PENOLAKAN untuk klaim ID/Tiket: ${id}, Alasan: ${reason}`);
+
     const updatedClaim = await rejectClaim(id, reason || 'Tidak memenuhi syarat & ketentuan garansi resmi');
+
+    if (!updatedClaim) {
+      return res.status(404).json({
+        success: false,
+        message: 'Klaim tidak ditemukan'
+      });
+    }
+
+    // Kirim email notifikasi penolakan ke pelanggan
+    sendClaimRejectionEmail(updatedClaim).catch(mailErr => {
+      console.error('[Admin API] Background rejection email error:', mailErr.message);
+    });
 
     return res.json({
       success: true,
-      message: `Klaim #${updatedClaim.ticket_number} ditolak.`,
+      message: `Klaim #${updatedClaim.ticket_number} berhasil ditolak. Email pemberitahuan telah dikirim ke pelanggan.`,
       claim: updatedClaim
     });
   } catch (error) {

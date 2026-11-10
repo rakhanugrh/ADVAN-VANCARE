@@ -249,7 +249,91 @@ async function sendClaimApprovalEmail(claim) {
   }
 }
 
+/**
+ * Kirim email pemberitahuan klaim garansi DITOLAK (REJECTED) ke pelanggan
+ * @param {Object} claim - Data klaim lengkap dengan rejected_reason
+ */
+async function sendClaimRejectionEmail(claim) {
+  const transporter = createTransporter();
+  const fromName = process.env.EMAIL_FROM_NAME || 'VANCARE Advan Customer Care';
+  const fromAddress = process.env.EMAIL_USER || 'no-reply@vancare.advan.id';
+
+  const htmlContent = `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <style>
+      body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f1f5f9; margin: 0; padding: 20px; color: #1e293b; }
+      .container { max-width: 600px; background: #ffffff; margin: 0 auto; border-radius: 14px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.06); }
+      .header { background: linear-gradient(135deg, #090a0f 0%, #1c1f2e 100%); padding: 30px 25px; text-align: center; color: #ffffff; }
+      .header h1 { margin: 0 0 6px 0; font-size: 22px; font-weight: 700; color: #f43f5e; }
+      .badge-rejected { display: inline-block; background-color: #f43f5e; color: #ffffff; padding: 6px 18px; border-radius: 20px; font-weight: bold; font-size: 13px; margin-top: 10px; }
+      .content { padding: 30px 25px; line-height: 1.6; font-size: 14px; }
+      .reason-box { background: #fff1f2; border-left: 4px solid #f43f5e; padding: 15px; border-radius: 6px; margin: 20px 0; color: #881337; }
+      .info-table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+      .info-table td { padding: 8px 4px; border-bottom: 1px solid #f1f5f9; }
+      .info-table td.label { color: #64748b; font-weight: 600; width: 35%; }
+      .footer { background: #090a0f; color: #94a3b8; text-align: center; padding: 20px; font-size: 12px; line-height: 1.5; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>KLAIM GARANSI TIDAK DAPAT DISETUJUI</h1>
+        <p style="margin: 0; font-size: 13px; opacity: 0.85;">Pemberitahuan Status Klaim VANCARE Advan</p>
+        <div class="badge-rejected">STATUS: DITOLAK (REJECTED)</div>
+      </div>
+      <div class="content">
+        <p>Yth. Bpk/Ibu <strong>${claim.customer_name}</strong>,</p>
+        <p>Terima kasih telah mengajukan klaim garansi untuk produk Advan Anda. Berdasarkan hasil verifikasi dokumen dan bukti yang diajukan oleh tim teknisi VANCARE, kami menyampaikan bahwa permohonan klaim tiket <strong>#${claim.ticket_number}</strong> saat ini <strong>belum dapat disetujui</strong>.</p>
+        
+        <div class="reason-box">
+          <strong>Alasan Penolakan:</strong><br>
+          <p style="margin: 6px 0 0 0;">${claim.rejected_reason || 'Tidak memenuhi syarat & ketentuan masa garansi resmi Advan Indonesia.'}</p>
+        </div>
+
+        <table class="info-table">
+          <tr><td class="label">Nomor Tiket</td><td><strong>${claim.ticket_number}</strong></td></tr>
+          <tr><td class="label">Produk Advan</td><td>${claim.product_name}</td></tr>
+          <tr><td class="label">Serial Number (SN)</td><td><code>${claim.serial_number}</code></td></tr>
+        </table>
+
+        <p style="margin-top: 20px;">
+          Jika Anda memerlukan penjelasan lebih lanjut atau ingin melakukan servis berbayar di luar garansi resmi, silakan hubungi Customer Care VANCARE melalui WhatsApp resmi kami.
+        </p>
+      </div>
+      <div class="footer">
+        Hotline WhatsApp: 0812-3456-7890 | Gedung Hayam Wuruk No. 127, Jakarta Pusat<br>
+        &copy; 2026 Advan Indonesia. All rights reserved.
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+
+  if (!transporter) {
+    console.log(`[Mailer Mock] Email penolakan klaim #${claim.ticket_number} terkirim ke: ${claim.customer_email}`);
+    return { success: true, mocked: true };
+  }
+
+  try {
+    const info = await transporter.sendMail({
+      from: `"${fromName}" <${fromAddress}>`,
+      to: claim.customer_email,
+      subject: `[STATUS KLAIM] Pemberitahuan Klaim Garansi VANCARE Advan #${claim.ticket_number}`,
+      html: htmlContent
+    });
+    console.log(`[Mailer] Notifikasi penolakan berhasil terkirim ke ${claim.customer_email}: ${info.messageId}`);
+    return { success: true, messageId: info.messageId };
+  } catch (err) {
+    console.error(`[Mailer] Gagal mengirim email penolakan:`, err.message);
+    return { success: false, error: err.message };
+  }
+}
+
 module.exports = {
   sendClaimReceivedEmail,
-  sendClaimApprovalEmail
+  sendClaimApprovalEmail,
+  sendClaimRejectionEmail
 };

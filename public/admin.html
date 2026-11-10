@@ -377,20 +377,32 @@
               ${statusBadge}
             </td>
 
-            <!-- Aksi (Tombol Approve Simpel & Cepat) -->
+            <!-- Aksi (Tombol Approve & Tolak) -->
             <td class="py-3 px-4 text-center">
               <div class="flex items-center justify-center gap-1.5">
                 ${isPending ? `
                   <button onclick="oneClickApprove('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
                     id="approveBtn_${c.id}"
-                    class="bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1">
+                    class="bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1 shadow-xs">
                     <i class="fa-solid fa-check text-[10px]"></i>
                     <span>Approve</span>
                   </button>
+
+                  <button onclick="rejectClaimModal('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
+                    id="rejectBtn_${c.id}"
+                    class="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1"
+                    title="Tolak Pengajuan Klaim">
+                    <i class="fa-solid fa-xmark text-[10px]"></i>
+                    <span>Tolak</span>
+                  </button>
                 ` : isApproved ? `
-                  <span class="text-emerald-600 text-[11px] font-medium">Selesai</span>
+                  <span class="text-emerald-600 text-[11px] font-medium inline-flex items-center gap-1">
+                    <i class="fa-solid fa-check text-[10px]"></i> Disetujui
+                  </span>
                 ` : `
-                  <span class="text-slate-400 text-[11px]">-</span>
+                  <span class="text-rose-500 text-[11px] font-medium inline-flex items-center gap-1" title="${escapeHtml(c.rejected_reason || 'Ditolak')}">
+                    <i class="fa-solid fa-circle-xmark text-[10px]"></i> Ditolak
+                  </span>
                 `}
 
                 <button onclick="showDetail('${c.id}')" class="text-slate-500 hover:text-slate-800 px-2 py-1 rounded hover:bg-slate-100 transition text-[11px]">
@@ -404,8 +416,74 @@
     }
 
     /**
-     * SEKALI KLIK APPROVE
+     * FITUR: TOLAK PENGAJUAN KLAIM GARANSI
      */
+    async function rejectClaimModal(claimId, ticketNo, customerName) {
+      const { value: reason } = await Swal.fire({
+        title: 'Tolak Pengajuan Klaim?',
+        html: `Anda akan menolak klaim untuk tiket <strong class="text-brand-pink">${ticketNo}</strong> (${escapeHtml(customerName)}).<br><span class="text-xs text-slate-500">Pelanggan akan menerima email pemberitahuan resmi beserta alasan penolakan.</span>`,
+        input: 'textarea',
+        inputLabel: 'Alasan Penolakan Klaim (Wajib):',
+        inputPlaceholder: 'Contoh: Masa garansi unit telah berakhir, segel garansi rusak, atau kerusakan akibat kelalaian pemakaian (cairan/jatuh)...',
+        inputAttributes: {
+          'aria-label': 'Tuliskan alasan penolakan di sini'
+        },
+        inputValidator: (value) => {
+          if (!value || !value.trim()) {
+            return 'Harap masukkan alasan penolakan klaim!';
+          }
+        },
+        showCancelButton: true,
+        confirmButtonColor: '#e11d48',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Tolak Klaim & Kirim Email',
+        cancelButtonText: 'Batal'
+      });
+
+      if (!reason) return;
+
+      const btn = document.getElementById(`rejectBtn_${claimId}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin text-[10px]"></i>`;
+      }
+
+      try {
+        const response = await fetch(`/api/claims/${claimId}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason: reason.trim() })
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+          Swal.fire({
+            icon: 'success',
+            title: 'Klaim Berhasil Ditolak',
+            text: `Tiket ${ticketNo} telah ditolak. Email pemberitahuan resmi telah dikirim ke pelanggan.`,
+            confirmButtonColor: '#e11d48'
+          });
+          await loadClaimsData();
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'Gagal Menolak Klaim',
+            text: result.message || 'Terjadi kesalahan sistem'
+          });
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<i class="fa-solid fa-xmark text-[10px]"></i> Tolak`;
+          }
+        }
+      } catch (err) {
+        Swal.fire({ icon: 'error', title: 'Kesalahan Jaringan', text: err.message });
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = `<i class="fa-solid fa-xmark text-[10px]"></i> Tolak`;
+        }
+      }
+    }
     async function oneClickApprove(claimId, ticketNo, customerName) {
       const confirmResult = await Swal.fire({
         title: 'Approve Klaim?',
@@ -573,12 +651,24 @@
           </div>
         ` : ''}
 
+        ${claim.status === 'REJECTED' ? `
+          <div class="bg-rose-50 border border-rose-200 rounded-lg p-3 text-rose-800">
+            <span class="text-[10px] font-bold uppercase block text-rose-600">Alasan Penolakan:</span>
+            <p class="mt-0.5 text-xs font-medium">${escapeHtml(claim.rejected_reason || 'Tidak memenuhi syarat & ketentuan garansi resmi.')}</p>
+          </div>
+        ` : ''}
+
         ${claim.status === 'PENDING' ? `
-          <div class="pt-2">
+          <div class="pt-2 flex items-center gap-2">
             <button onclick="closeDetailModal(); oneClickApprove('${claim.id}', '${claim.ticket_number}', '${escapeHtml(claim.customer_name)}')"
-              class="w-full bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-1.5">
+              class="flex-1 bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-1.5 shadow-sm">
               <i class="fa-solid fa-check"></i>
               <span>Approve Klaim Ini</span>
+            </button>
+            <button onclick="closeDetailModal(); rejectClaimModal('${claim.id}', '${claim.ticket_number}', '${escapeHtml(claim.customer_name)}')"
+              class="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-1.5">
+              <i class="fa-solid fa-xmark"></i>
+              <span>Tolak Klaim</span>
             </button>
           </div>
         ` : ''}
