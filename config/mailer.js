@@ -101,8 +101,7 @@ async function sendClaimReceivedEmail(claim) {
         <p>Tim VANCARE akan melakukan verifikasi data dan kelengkapan bukti dalam waktu maksimal <strong>1 x 24 Jam Kerja</strong>. Anda akan menerima notifikasi email berikutnya setelah permohonan disetujui.</p>
       </div>
       <div class="footer">
-        <p>Email ini dikirim secara otomatis oleh Sistem VANCARE Advan Indonesia.<br>
-        Butuh bantuan darurat? Hubungi WhatsApp Care kami di <strong>0812-3456-7890</strong></p>
+        <p>Email ini dikirim secara otomatis oleh Sistem VANCARE Advan Indonesia.</p>
       </div>
     </div>
   </body>
