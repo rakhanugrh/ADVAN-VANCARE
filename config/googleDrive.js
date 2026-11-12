@@ -4,46 +4,40 @@ const { Readable } = require('stream');
 const { google } = require('googleapis');
 
 /**
- * Inisialisasi Google Drive Client menggunakan Service Account
+ * Inisialisasi Google Drive Client menggunakan OAuth2 (Akun Google Pribadi)
  */
 function getDriveClient() {
-  const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS || 'credentials.json';
-  const fullCredPath = path.isAbsolute(credPath) ? credPath : path.join(__dirname, '..', credPath);
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!fs.existsSync(fullCredPath)) {
-    console.warn(`[Google Drive] File credentials tidak ditemukan di: ${fullCredPath}`);
+  if (!clientId || !clientSecret || !refreshToken) {
+    console.warn('[Google Drive] GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, atau GOOGLE_REFRESH_TOKEN belum lengkap di .env. Mode lokal fallback aktif.');
     return null;
   }
 
   try {
-    const rawData = fs.readFileSync(fullCredPath, 'utf8');
-    const creds = JSON.parse(rawData);
+    const oauth2Client = new google.auth.OAuth2(
+      clientId,
+      clientSecret,
+      'https://developers.google.com/oauthplayground'
+    );
 
-    // Cek apakah masih dummy / placeholder
-    if (!creds.client_email || creds.client_email.includes('placeholder') || creds.private_key.includes('dummyKEYPLACEHOLDER')) {
-      console.warn('[Google Drive] credentials.json terdeteksi masih berupa template/placeholder. Mode lokal fallback aktif.');
-      return null;
-    }
-
-    const auth = new google.auth.GoogleAuth({
-      keyFile: fullCredPath,
-      scopes: [
-        'https://www.googleapis.com/auth/drive',
-        'https://www.googleapis.com/auth/drive.file'
-      ]
+    oauth2Client.setCredentials({
+      refresh_token: refreshToken
     });
 
-    return google.drive({ version: 'v3', auth });
+    return google.drive({ version: 'v3', auth: oauth2Client });
   } catch (err) {
-    console.error('[Google Drive] Gagal membaca credentials.json:', err.message);
+    console.error('[Google Drive] Gagal menginisialisasi OAuth2 client:', err.message);
     return null;
   }
 }
 
 /**
  * Upload file bukti klaim ke Google Drive (atau fallback lokal)
- * @param {Object} file - Objek file dari Multer (buffer, originalname, mimetype)
- * @returns {Promise<{fileId: string, webViewLink: string, webContentLink: string, fileName: string}>}
+ * @param {Object} file Objek file dari Multer (buffer, originalname, mimetype)
+ * @returns {Promise<{fileId: string, webViewLink: string, webContentLink: string, fileName: string, isGoogleDrive: boolean}>}
  */
 async function uploadFileToDrive(file) {
   if (!file) {
@@ -51,7 +45,8 @@ async function uploadFileToDrive(file) {
       fileId: null,
       webViewLink: null,
       webContentLink: null,
-      fileName: null
+      fileName: null,
+      isGoogleDrive: false
     };
   }
 
@@ -83,21 +78,19 @@ async function uploadFileToDrive(file) {
           mimeType: file.mimetype,
           body: stream
         },
-        fields: 'id, name, webViewLink, webContentLink',
-        supportsAllDrives: true
+        fields: 'id, name, webViewLink, webContentLink'
       });
 
       const fileId = response.data.id;
 
-      // Berikan akses view publik agar admin/teknisi bisa langsung membuka bukti foto/video
+      // Berikan akses view publik per-file agar admin/teknisi bisa langsung membuka bukti foto/video
       try {
         await drive.permissions.create({
           fileId: fileId,
           requestBody: {
             role: 'reader',
             type: 'anyone'
-          },
-          supportsAllDrives: true
+          }
         });
       } catch (permErr) {
         console.warn('[Google Drive] Catatan: Permission reader publik:', permErr.message);
@@ -114,12 +107,10 @@ async function uploadFileToDrive(file) {
       };
     } catch (uploadErr) {
       console.error('[Google Drive] Gagal upload ke Drive API, beralih ke penyimpanan lokal:', uploadErr.message);
-      // Fallback ke penyimpanan lokal jika kuota habis atau izin API belum aktif
     }
   }
 
   // --- FALLBACK LOCAL STORAGE ---
-  // Jika Google Drive belum disetup atau gagal, simpan file ke public/uploads
   const uploadDir = path.join(__dirname, '..', 'public', 'uploads');
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
