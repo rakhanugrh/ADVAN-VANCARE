@@ -78,6 +78,21 @@
           <span>Logout</span>
         </button>
       </div>
+      <div class="flex items-center gap-2 shrink-0">
+  <input type="file" id="csvFileInput" accept=".csv" class="hidden" onchange="uploadCSV(this)">
+  
+  <button onclick="document.getElementById('csvFileInput').click()" 
+    class="bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-lg text-sm transition inline-flex items-center gap-2 whitespace-nowrap shrink-0">
+    <span>📥</span>
+    <span>Import CSV</span>
+  </button>
+
+  <button onclick="downloadCSV()" 
+    class="bg-blue-600 hover:bg-blue-700 text-white font-medium px-4 py-2 rounded-lg text-sm transition inline-flex items-center gap-2 whitespace-nowrap shrink-0">
+    <span>📤</span>
+    <span>Export CSV</span>
+  </button>
+</div>
 
     </div>
   </header>
@@ -773,6 +788,115 @@
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
     }
+    async function uploadCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+
+  const formData = new FormData();
+  formData.append('file', file);
+  
+  // Mengambil token login admin yang tersimpan di browser
+  const token = localStorage.getItem('vancare_admin_token') || localStorage.getItem('adminToken') || localStorage.getItem('token');
+
+  try {
+    const res = await fetch('/api/admin/import-csv', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
+    });
+
+    const result = await res.json();
+    if (result.success) {
+      alert(result.message);
+      location.reload();
+    } else {
+      alert('Gagal import CSV: ' + result.message);
+    }
+  } catch (err) {
+    alert('Terjadi kesalahan jaringan saat mengunggah file CSV.');
+  } finally {
+    input.value = ''; // Reset input file agar bisa upload ulang file yang sama
+  }
+}
+
+    // ... (kode JS dashboard admin yang sudah ada) ...
+
+    async function downloadCSV() {
+      const token = localStorage.getItem('vancare_admin_token') || localStorage.getItem('adminToken') || localStorage.getItem('token');
+
+      try {
+        const res = await fetch('/api/claims', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        const result = await res.json();
+
+        if (!result.success || !result.data || result.data.length === 0) {
+          alert('Belum ada data klaim untuk di-download.');
+          return;
+        }
+
+        const separator = ';';
+        const headers = [
+          'No', 'No Tiket', 'Tanggal Klaim', 'Nama Pelanggan', 'Email',
+          'No WhatsApp / HP', 'Alamat Lengkap', 'Kategori Produk',
+          'Tipe / Model Produk', 'Serial Number / IMEI', 'Tanggal Pembelian',
+          'Deskripsi Kendala', 'Status Klaim', 'Link Bukti Foto', 'Link Bukti Video'
+        ];
+
+        const csvRows = ['sep=;', headers.join(separator)];
+
+        result.data.forEach((c, index) => {
+          const tglKlaim = c.created_at
+            ? new Date(c.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : '-';
+
+          const phoneFormatted = c.customer_phone ? `'${c.customer_phone}` : '-';
+          const snFormatted = c.serial_number ? `'${c.serial_number}` : '-';
+
+          const row = [
+            index + 1,
+            c.ticket_number || '-',
+            tglKlaim,
+            c.customer_name || '-',
+            c.customer_email || '-',
+            phoneFormatted,
+            c.customer_address || '-',
+            c.product_category || '-',
+            c.product_name || '-',
+            snFormatted,
+            c.purchase_date || '-',
+            c.issue_description || '-',
+            c.status || 'PENDING',
+            c.photo_url || c.drive_file_url || '-',
+            c.video_url || '-'
+          ].map(val => {
+            const cleanText = String(val)
+              .replace(/(\r\n|\n|\r)/gm, ' ')
+              .replace(/"/g, '""');
+            return `"${cleanText}"`;
+          });
+
+          csvRows.push(row.join(separator));
+        });
+
+        const csvContent = '\uFEFF' + csvRows.join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `Laporan_Klaim_VANCARE_${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Gagal mengunduh file CSV: ' + err.message);
+      }
+    }
+  </script>
   </script>
 </body>
 </html>

@@ -4,6 +4,8 @@ const cors = require('cors');
 const path = require('path');
 const multer = require('multer');
 const crypto = require('crypto');
+const csv = require('csv-parser');
+const { Readable } = require('stream');
 
 const { uploadFileToDrive } = require('./config/googleDrive');
 const { sendClaimReceivedEmail, sendClaimApprovalEmail, sendClaimRejectionEmail } = require('./config/mailer');
@@ -54,6 +56,12 @@ const upload = multer({
       cb(new Error('Tipe file tidak didukung. Harap upload foto (JPG/PNG), video (MP4/MOV), atau dokumen PDF.'), false);
     }
   }
+});
+
+// Konfigurasi Multer khusus Import CSV
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // Maksimal 10MB untuk CSV
 });
 
 // Helper untuk generate Nomor Tiket Unik VANCARE: VC-YYYYMMDD-XXXX
@@ -413,6 +421,67 @@ app.get('/api/stats', requireAdminAuth, async (req, res) => {
       message: error.message
     });
   }
+});
+
+/**
+ * 7. POST /api/admin/import-csv
+ * Import data klaim secara massal dari file CSV ke database
+ */
+app.post('/api/admin/import-csv', requireAdminAuth, csvUpload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ success: false, message: 'Tidak ada file CSV yang diunggah.' });
+  }
+
+  const rows = [];
+  const stream = Readable.from(req.file.buffer.toString('utf8'));
+
+  stream
+    .pipe(csv())
+    .on('data', (row) => rows.push(row))
+    .on('end', async () => {
+      try {
+        let importedCount = 0;
+
+        for (const row of rows) {
+          if (!row.customer_name && !row.serial_number) continue;
+
+          const claimPayload = {
+            ticket_number: row.ticket_number ? row.ticket_number.trim() : generateTicketNumber(),
+            customer_name: (row.customer_name || 'Pelanggan Import').trim(),
+            customer_email: (row.customer_email || row.email || '').trim().toLowerCase(),
+            customer_phone: (row.customer_phone || row.phone_number || '').trim(),
+            customer_address: (row.customer_address || '').trim(),
+            product_category: (row.product_category || 'Perangkat').trim(),
+            product_name: (row.product_name || row.product_model || '').trim(),
+            serial_number: (row.serial_number || '').trim().toUpperCase(),
+            purchase_date: row.purchase_date || null,
+            issue_description: (row.issue_description || row.problem_description || '-').trim(),
+            status: (row.status || 'PENDING').trim().toUpperCase()
+          };
+
+          await saveClaim(claimPayload);
+          importedCount++;
+        }
+
+        console.log(`[Admin API] Berhasil import ${importedCount} data klaim dari CSV.`);
+        return res.json({
+          success: true,
+          message: `Berhasil mengimpor ${importedCount} data klaim ke sistem VANCARE.`
+        });
+      } catch (err) {
+        console.error('[Admin API] Error saat import CSV:', err);
+        return res.status(500).json({
+          success: false,
+          message: 'Gagal memproses data CSV: ' + err.message
+        });
+      }
+    })
+    .on('error', (err) => {
+      return res.status(400).json({
+        success: false,
+        message: 'Format file CSV tidak valid: ' + err.message
+      });
+    });
 });
 
 // Middleware penanganan Multer Error (misal ukuran melebihi 200MB)
