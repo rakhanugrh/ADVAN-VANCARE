@@ -132,8 +132,89 @@ async function uploadFileToDrive(file) {
     isGoogleDrive: false
   };
 }
+/**
+ * Membuat Resumable Upload Session URL langsung ke Google Drive
+ */
+async function createResumableSession({ fileName, mimeType, fileSize, origin }) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    'https://developers.google.com/oauthplayground'
+  );
+  oauth2Client.setCredentials({ refresh_token: refreshToken });
+
+  const { token } = await oauth2Client.getAccessToken();
+  const sanitizedName = `VANCARE_${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+
+  const metadata = {
+    name: sanitizedName,
+    description: 'Bukti Klaim Garansi VANCARE Advan',
+    ...(folderId ? { parents: [folderId] } : {})
+  };
+
+  const initRes = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&fields=id,name,webViewLink,webContentLink',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'X-Upload-Content-Type': mimeType,
+        'X-Upload-Content-Length': String(fileSize),
+        ...(origin ? { Origin: origin } : {})
+      },
+      body: JSON.stringify(metadata)
+    }
+  );
+
+  if (!initRes.ok) {
+    const errText = await initRes.text();
+    throw new Error(`Gagal membuat sesi Google Drive: ${errText}`);
+  }
+
+  return {
+    uploadUrl: initRes.headers.get('location'),
+    fileName: sanitizedName
+  };
+}
+
+/**
+ * Mengatur permission file agar bisa dilihat admin/teknisi setelah upload selesai
+ */
+async function finalizeResumableFile(fileId) {
+  const drive = getDriveClient();
+  if (!drive) throw new Error('Drive client tidak aktif.');
+
+  await drive.permissions.create({
+    fileId,
+    requestBody: {
+      role: 'reader',
+      type: 'anyone'
+    }
+  });
+
+  const fileMeta = await drive.files.get({
+    fileId,
+    fields: 'id, name, webViewLink, webContentLink'
+  });
+
+  return {
+    fileId: fileMeta.data.id,
+    fileName: fileMeta.data.name,
+    webViewLink: fileMeta.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
+    webContentLink: fileMeta.data.webContentLink || `https://drive.google.com/uc?id=${fileId}&export=download`,
+    isGoogleDrive: true
+  };
+}
 
 module.exports = {
   uploadFileToDrive,
-  getDriveClient
+  getDriveClient,
+  createResumableSession,
+  finalizeResumableFile
 };

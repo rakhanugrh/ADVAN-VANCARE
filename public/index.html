@@ -98,7 +98,7 @@
   <main class="max-w-4xl mx-auto px-4 pb-16 w-full">
     <div class="dark-card rounded-2xl p-6 sm:p-10">
       
-      <form id="claimForm" enctype="multipart/form-data" class="space-y-8">
+      <form id="claimForm" class="space-y-8">
         
         <!-- BAGIAN 1: IDENTITAS PELANGGAN -->
         <div>
@@ -471,6 +471,108 @@
     const removeVideoBtn = document.getElementById('removeVideoBtn');
 
     const MAX_FILE_SIZE = 200 * 1024 * 1024; // 200MB
+    const DRIVE_CHUNK_SIZE = 10 * 1024 * 1024;
+
+    async function readApiResponse(response) {
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        throw new Error('Respons server tidak valid.');
+      }
+
+      if (!response.ok || !payload.success) {
+        throw new Error(payload.message || 'Permintaan gagal diproses.');
+      }
+      return payload;
+    }
+
+    function uploadDriveChunk(uploadUrl, file, start, end, onProgress) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.setRequestHeader('Content-Range', `bytes ${start}-${end - 1}/${file.size}`);
+
+        xhr.upload.addEventListener('progress', (event) => {
+          if (event.lengthComputable) onProgress(event.loaded);
+        });
+        xhr.addEventListener('error', () => reject(new Error('Koneksi upload ke Google Drive gagal.')));
+        xhr.addEventListener('abort', () => reject(new Error('Upload ke Google Drive dibatalkan.')));
+        xhr.addEventListener('load', () => {
+          if (xhr.status === 308) {
+            resolve(null);
+            return;
+          }
+          if (xhr.status !== 200 && xhr.status !== 201) {
+            reject(new Error(`Google Drive menolak chunk upload (HTTP ${xhr.status}).`));
+            return;
+          }
+
+          try {
+            const uploadedFile = JSON.parse(xhr.responseText);
+            if (!uploadedFile.id) throw new Error('Google Drive tidak mengembalikan fileId.');
+            resolve(uploadedFile);
+          } catch (error) {
+            reject(error);
+          }
+        });
+        xhr.send(file.slice(start, end));
+      });
+    }
+
+    async function uploadEvidenceFile(file, type, totalBytes, uploadedBytes, onProgress) {
+      const sessionResponse = await fetch('/api/drive/init-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          fileSize: file.size
+        })
+      });
+      const session = await readApiResponse(sessionResponse);
+      if (!session.uploadUrl) throw new Error('Google Drive tidak mengembalikan URL upload.');
+
+      let driveFile = null;
+      for (let start = 0; start < file.size; start += DRIVE_CHUNK_SIZE) {
+        const end = Math.min(start + DRIVE_CHUNK_SIZE, file.size);
+        const uploadedChunk = await uploadDriveChunk(
+          session.uploadUrl,
+          file,
+          start,
+          end,
+          (chunkBytes) => onProgress(
+            uploadedBytes + start + chunkBytes,
+            totalBytes,
+            type
+          )
+        );
+        if (uploadedChunk) {
+          if (end !== file.size) {
+            throw new Error('Google Drive menyelesaikan upload sebelum seluruh file terkirim.');
+          }
+          driveFile = uploadedChunk;
+        }
+      }
+
+      if (!driveFile) throw new Error('Google Drive belum menyelesaikan upload file.');
+
+      const finalizeResponse = await fetch('/api/drive/finalize-upload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId: driveFile.id })
+      });
+      const finalized = await readApiResponse(finalizeResponse);
+
+      return {
+        ...finalized.file,
+        type,
+        originalName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size
+      };
+    }
 
     // Setup Handler Foto
     setupDropzone(photoDropzone, photoInput, (file) => {
@@ -599,20 +701,58 @@
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
         </svg>
-        <span>Mengupload Bukti (Hingga 200MB) & Menyimpan...</span>
+        <span>Menyiapkan upload langsung ke Google Drive...</span>
       `;
+      const progressLabel = submitBtn.querySelector('span');
 
       try {
-        const formData = new FormData(form);
+        const filesToUpload = [];
+        if (hasPhoto) filesToUpload.push({ type: 'photo', file: photoInput.files[0] });
+        if (hasVideo) filesToUpload.push({ type: 'video', file: videoInput.files[0] });
+        const totalBytes = filesToUpload.reduce((total, item) => total + item.file.size, 0);
+        let uploadedBytes = 0;
+        const uploadedFiles = [];
+
+        for (const item of filesToUpload) {
+          const fileLabel = item.type === 'photo' ? 'Foto' : 'Video';
+          progressLabel.textContent = `Menyiapkan upload ${fileLabel}...`;
+          const uploadedFile = await uploadEvidenceFile(
+            item.file,
+            item.type,
+            totalBytes,
+            uploadedBytes,
+            (bytesSent, total, type) => {
+              const percent = Math.floor((bytesSent / total) * 100);
+              const label = type === 'photo' ? 'Foto' : 'Video';
+              progressLabel.textContent = `Mengunggah ${label} (${percent}% keseluruhan)...`;
+            }
+          );
+          uploadedFiles.push(uploadedFile);
+          uploadedBytes += item.file.size;
+        }
+
+        progressLabel.textContent = 'Menyimpan data klaim...';
 
         const response = await fetch('/api/claims', {
           method: 'POST',
-          body: formData
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            customer_name: document.getElementById('customer_name').value,
+            customer_email: document.getElementById('customer_email').value,
+            customer_phone: document.getElementById('customer_phone').value,
+            customer_address: document.getElementById('customer_address').value,
+            product_category: document.getElementById('product_category').value,
+            product_name: document.getElementById('product_name').value,
+            serial_number: document.getElementById('serial_number').value,
+            purchase_date: document.getElementById('purchase_date').value,
+            issue_description: document.getElementById('issue_description').value,
+            files: uploadedFiles
+          })
         });
 
-        const result = await response.json();
+        const result = await readApiResponse(response);
 
-        if (response.ok && result.success) {
+        if (result.success) {
           form.reset();
           document.getElementById('product_name_select').disabled = true;
           document.getElementById('product_name_select').innerHTML = '<option value="" disabled selected>-- Pilih Kategori Dahulu --</option>';
@@ -654,7 +794,7 @@
         Swal.fire({
           icon: 'error',
           title: 'Error Koneksi',
-          text: 'Tidak dapat menghubungi server. Coba beberapa saat lagi.',
+          text: err.message || 'Tidak dapat menghubungi server. Coba beberapa saat lagi.',
           background: '#12141e',
           color: '#ffffff',
           confirmButtonColor: '#e6007e'

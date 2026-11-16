@@ -7,7 +7,11 @@ const crypto = require('crypto');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
 
-const { uploadFileToDrive } = require('./config/googleDrive');
+const {
+  uploadFileToDrive,
+  createResumableSession,
+  finalizeResumableFile
+} = require('./config/googleDrive');
 const { sendClaimReceivedEmail, sendClaimApprovalEmail, sendClaimRejectionEmail } = require('./config/mailer');
 const {
   saveClaim,
@@ -20,6 +24,18 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MAX_CLAIM_FILE_SIZE = 200 * 1024 * 1024;
+const ALLOWED_CLAIM_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/jpg',
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'application/pdf'
+];
 
 // Middleware
 app.use(cors());
@@ -35,22 +51,10 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 200 * 1024 * 1024 // Batas ukuran 200MB (Mendukung Foto Resolusi Tinggi & Video Bukti Kendala Panjang)
+    fileSize: MAX_CLAIM_FILE_SIZE // Batas ukuran 200MB
   },
   fileFilter: (req, file, cb) => {
-    // Validasi tipe file (Gambar, Video, atau Dokumen PDF)
-    const allowedMime = [
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-      'image/jpg',
-      'video/mp4',
-      'video/quicktime',
-      'video/x-msvideo',
-      'video/webm',
-      'application/pdf'
-    ];
-    if (allowedMime.includes(file.mimetype)) {
+    if (ALLOWED_CLAIM_MIME_TYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
       cb(new Error('Tipe file tidak didukung. Harap upload foto (JPG/PNG), video (MP4/MOV), atau dokumen PDF.'), false);
@@ -186,31 +190,104 @@ app.post('/api/claims', upload.fields([
       });
     }
 
-    const photoFile = (req.files && req.files.proof_photo && req.files.proof_photo[0]) || 
-                      (req.files && req.files.proof_file && req.files.proof_file[0]) || 
-                      req.file;
-    const videoFile = req.files && req.files.proof_video && req.files.proof_video[0];
+    const hasJsonFiles = req.is('application/json') &&
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'files');
+    const submittedFiles = req.body && req.body.files;
+    if (hasJsonFiles && !Array.isArray(submittedFiles)) {
+      return res.status(400).json({ success: false, message: 'Daftar file bukti tidak valid.' });
+    }
+
+    let photoResult = { fileId: null, webViewLink: null, webContentLink: null, fileName: null, isGoogleDrive: false };
+    let videoResult = { fileId: null, webViewLink: null, webContentLink: null, fileName: null, isGoogleDrive: false };
+    const uploadedFiles = [];
+
+    if (hasJsonFiles) {
+      for (const file of submittedFiles) {
+        if (!file || (file.type !== 'photo' && file.type !== 'video') ||
+            typeof file.fileId !== 'string' || !file.fileId.trim() ||
+            typeof file.fileName !== 'string' || !file.fileName.trim()) {
+          return res.status(400).json({ success: false, message: 'Metadata file bukti tidak valid.' });
+        }
+
+        if ((file.type === 'photo' && photoResult.fileId) || (file.type === 'video' && videoResult.fileId)) {
+          return res.status(400).json({ success: false, message: 'Hanya satu file foto dan satu file video yang dapat dilampirkan.' });
+        }
+
+        const fileId = file.fileId.trim();
+        const canonicalViewLink = `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
+        const canonicalContentLink = `https://drive.google.com/uc?id=${encodeURIComponent(fileId)}&export=download`;
+        const result = {
+          fileId,
+          fileName: file.fileName.trim(),
+          webViewLink: typeof file.webViewLink === 'string' && file.webViewLink.startsWith('https://drive.google.com/')
+            ? file.webViewLink
+            : canonicalViewLink,
+          webContentLink: typeof file.webContentLink === 'string' && file.webContentLink.startsWith('https://drive.google.com/')
+            ? file.webContentLink
+            : canonicalContentLink,
+          isGoogleDrive: true
+        };
+        const metadata = {
+          type: file.type,
+          fileId: result.fileId,
+          fileName: result.fileName,
+          originalName: typeof file.originalName === 'string' ? file.originalName : result.fileName,
+          mimeType: typeof file.mimeType === 'string' ? file.mimeType : '',
+          size: Number.isSafeInteger(file.size) && file.size >= 0 ? file.size : null,
+          webViewLink: result.webViewLink,
+          webContentLink: result.webContentLink,
+          isGoogleDrive: true
+        };
+
+        uploadedFiles.push(metadata);
+        if (file.type === 'photo') photoResult = result;
+        else videoResult = result;
+      }
+    } else {
+      const photoFile = (req.files && req.files.proof_photo && req.files.proof_photo[0]) ||
+                        (req.files && req.files.proof_file && req.files.proof_file[0]) ||
+                        req.file;
+      const videoFile = req.files && req.files.proof_video && req.files.proof_video[0];
+
+      if (photoFile) {
+        console.log(`[Claim API] Upload Foto: ${photoFile.originalname} (${photoFile.size} bytes)`);
+        photoResult = await uploadFileToDrive(photoFile);
+        uploadedFiles.push({
+          type: 'photo',
+          fileId: photoResult.fileId,
+          fileName: photoResult.fileName,
+          originalName: photoFile.originalname,
+          mimeType: photoFile.mimetype,
+          size: photoFile.size,
+          webViewLink: photoResult.webViewLink,
+          webContentLink: photoResult.webContentLink,
+          isGoogleDrive: !!photoResult.isGoogleDrive
+        });
+      }
+
+      if (videoFile) {
+        console.log(`[Claim API] Upload Video: ${videoFile.originalname} (${videoFile.size} bytes)`);
+        videoResult = await uploadFileToDrive(videoFile);
+        uploadedFiles.push({
+          type: 'video',
+          fileId: videoResult.fileId,
+          fileName: videoResult.fileName,
+          originalName: videoFile.originalname,
+          mimeType: videoFile.mimetype,
+          size: videoFile.size,
+          webViewLink: videoResult.webViewLink,
+          webContentLink: videoResult.webContentLink,
+          isGoogleDrive: !!videoResult.isGoogleDrive
+        });
+      }
+    }
 
     // Minimal upload 1 bukti (foto atau video)
-    if (!photoFile && !videoFile) {
+    if (uploadedFiles.length === 0) {
       return res.status(400).json({
         success: false,
         message: 'Mohon lampirkan minimal 1 foto bukti kendala/nota atau video rekaman.'
       });
-    }
-
-    // 1. Upload file foto & video ke Google Drive 400GB (atau fallback lokal)
-    let photoResult = { fileId: null, webViewLink: null, webContentLink: null, fileName: null };
-    let videoResult = { fileId: null, webViewLink: null, webContentLink: null, fileName: null };
-
-    if (photoFile) {
-      console.log(`[Claim API] Upload Foto: ${photoFile.originalname} (${photoFile.size} bytes)`);
-      photoResult = await uploadFileToDrive(photoFile);
-    }
-
-    if (videoFile) {
-      console.log(`[Claim API] Upload Video: ${videoFile.originalname} (${videoFile.size} bytes)`);
-      videoResult = await uploadFileToDrive(videoFile);
     }
 
     // 2. Buat objek data klaim
@@ -226,6 +303,7 @@ app.post('/api/claims', upload.fields([
       serial_number: serial_number.trim().toUpperCase(),
       purchase_date: purchase_date || null,
       issue_description: issue_description.trim(),
+      uploaded_files: uploadedFiles,
       // Foto Bukti
       photo_file_id: photoResult.fileId,
       photo_url: photoResult.webViewLink,
@@ -482,6 +560,50 @@ app.post('/api/admin/import-csv', requireAdminAuth, csvUpload.single('file'), as
         message: 'Format file CSV tidak valid: ' + err.message
       });
     });
+});
+
+// Meminta sesi upload langsung ke Google Drive
+app.post('/api/drive/init-upload', async (req, res) => {
+  try {
+    const { fileName, mimeType, fileSize } = req.body;
+    if (typeof fileName !== 'string' || !fileName.trim() || typeof mimeType !== 'string' || !mimeType) {
+      return res.status(400).json({ success: false, message: 'Metadata file tidak lengkap.' });
+    }
+    if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_CLAIM_FILE_SIZE) {
+      return res.status(400).json({ success: false, message: 'Ukuran file harus lebih dari 0 dan maksimal 200MB.' });
+    }
+    if (!ALLOWED_CLAIM_MIME_TYPES.includes(mimeType)) {
+      return res.status(400).json({ success: false, message: 'Tipe file tidak didukung.' });
+    }
+
+    const session = await createResumableSession({
+      fileName,
+      mimeType,
+      fileSize,
+      origin: req.headers.origin
+    });
+
+    return res.json({ success: true, ...session });
+  } catch (err) {
+    console.error('[Drive Init Upload Error]:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Mengaktifkan akses baca publik setelah browser selesai mengunggah
+app.post('/api/drive/finalize-upload', async (req, res) => {
+  try {
+    const { fileId } = req.body;
+    if (!fileId) {
+      return res.status(400).json({ success: false, message: 'fileId wajib diisi.' });
+    }
+
+    const result = await finalizeResumableFile(fileId);
+    return res.json({ success: true, file: result });
+  } catch (err) {
+    console.error('[Drive Finalize Error]:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 // Middleware penanganan Multer Error (misal ukuran melebihi 200MB)

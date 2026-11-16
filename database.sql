@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS vancare_claims (
     customer_email VARCHAR(150) NOT NULL,
     customer_phone VARCHAR(50) NOT NULL,
     customer_address TEXT,
+    product_category VARCHAR(100),
     product_name VARCHAR(150) NOT NULL,
     serial_number VARCHAR(100) NOT NULL,
     purchase_date DATE,
@@ -17,6 +18,13 @@ CREATE TABLE IF NOT EXISTS vancare_claims (
     drive_file_id VARCHAR(255),
     drive_file_url TEXT,
     drive_file_name VARCHAR(255),
+    photo_file_id VARCHAR(255),
+    photo_url TEXT,
+    photo_file_name VARCHAR(255),
+    video_file_id VARCHAR(255),
+    video_url TEXT,
+    video_file_name VARCHAR(255),
+    uploaded_files JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_google_drive BOOLEAN DEFAULT FALSE,
     status VARCHAR(20) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED')),
     admin_notes TEXT,
@@ -24,6 +32,15 @@ CREATE TABLE IF NOT EXISTS vancare_claims (
     approved_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS product_category VARCHAR(100);
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS photo_file_id VARCHAR(255);
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS photo_url TEXT;
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS photo_file_name VARCHAR(255);
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS video_file_id VARCHAR(255);
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS video_url TEXT;
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS video_file_name VARCHAR(255);
+ALTER TABLE vancare_claims ADD COLUMN IF NOT EXISTS uploaded_files JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- Indeks untuk pencarian cepat
 CREATE INDEX IF NOT EXISTS idx_vancare_ticket ON vancare_claims(ticket_number);
