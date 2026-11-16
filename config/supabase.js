@@ -1,6 +1,7 @@
 const { createClient } = require('@supabase/supabase-js');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 // Cek apakah konfigurasi Supabase valid
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -22,76 +23,177 @@ if (isSupabaseConfigured) {
     console.error('[Supabase] Gagal inisialisasi Supabase:', err.message);
   }
 } else {
-  console.log('[Supabase] Kunci Supabase belum dikonfigurasi. Menggunakan penyimpanan data lokal (data/claims.json).');
+  console.log('[Supabase] Kunci Supabase belum dikonfigurasi. Menggunakan penyimpanan data lokal.');
 }
 
-// --- PENYIMPANAN DATA LOKAL (Fallback jika Supabase belum diset) ---
-const localDataDir = path.join(__dirname, '..', 'data');
+// Deteksi lingkungan Serverless (Vercel / AWS Lambda)
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const localDataDir = isServerless
+  ? path.join(os.tmpdir(), 'vancare_data')
+  : path.join(__dirname, '..', 'data');
 const localDataFile = path.join(localDataDir, 'claims.json');
 
+// In-Memory cache sebagai proteksi jika filesystem serverless read-only
+let inMemoryClaims = [];
+
 function initLocalStore() {
-  if (!fs.existsSync(localDataDir)) {
-    fs.mkdirSync(localDataDir, { recursive: true });
-  }
-  if (!fs.existsSync(localDataFile)) {
-    // Buat data contoh agar admin dashboard langsung terlihat menarik
-    const seedData = [
-      {
-        id: '1',
-        ticket_number: 'VC-20261110-8901',
-        customer_name: 'Budi Pratama',
-        customer_email: 'budi.pratama@example.com',
-        customer_phone: '081234567890',
-        customer_address: 'Jl. Merdeka No. 45, Jakarta Pusat',
-        product_name: 'Advan Workplus (Ryzen 5)',
-        serial_number: 'ADVWP-2025-882190',
-        purchase_date: '2025-08-15',
-        issue_description: 'Keyboard tombol Spacebar dan Enter tidak merespon setelah pemakaian 2 bulan.',
-        drive_file_id: 'drive_sample_id_1',
-        drive_file_url: 'https://images.unsplash.com/photo-1588872657578-7efd1f1555ed?w=800',
-        drive_file_name: 'foto_kendala_keyboard.jpg',
-        is_google_drive: false,
-        status: 'PENDING',
-        created_at: new Date(Date.now() - 3600000 * 5).toISOString(),
-        approved_at: null
-      },
-      {
-        id: '2',
-        ticket_number: 'VC-20261110-7712',
-        customer_name: 'Siti Rahmawati',
-        customer_email: 'siti.rahma@example.com',
-        customer_phone: '085712345678',
-        customer_address: 'Komp. Melati Indah B4, Bandung',
-        product_name: 'Advan Tab VX Neo',
-        serial_number: 'ADVTAB-VX-339101',
-        purchase_date: '2025-09-01',
-        issue_description: 'Layar berkedip garis halus saat baterai di bawah 20%.',
-        drive_file_id: 'drive_sample_id_2',
-        drive_file_url: 'https://images.unsplash.com/photo-1544244015-0df4b3ffc6b0?w=800',
-        drive_file_name: 'layar_bergaris.jpg',
-        is_google_drive: false,
-        status: 'APPROVED',
-        created_at: new Date(Date.now() - 3600000 * 24).toISOString(),
-        approved_at: new Date(Date.now() - 3600000 * 18).toISOString()
-      }
-    ];
-    fs.writeFileSync(localDataFile, JSON.stringify(seedData, null, 2));
+  try {
+    if (!fs.existsSync(localDataDir)) {
+      fs.mkdirSync(localDataDir, { recursive: true });
+    }
+    if (!fs.existsSync(localDataFile)) {
+      fs.writeFileSync(localDataFile, JSON.stringify([], null, 2));
+    }
+  } catch (err) {
+    console.warn('[LocalStorage] Direktori lokal tidak dapat dibuat/ditulisi, fallback ke memori:', err.message);
   }
 }
 
 function readLocalClaims() {
-  initLocalStore();
   try {
-    const raw = fs.readFileSync(localDataFile, 'utf8');
-    return JSON.parse(raw);
+    initLocalStore();
+    if (fs.existsSync(localDataFile)) {
+      const raw = fs.readFileSync(localDataFile, 'utf8');
+      return JSON.parse(raw);
+    }
   } catch (err) {
-    return [];
+    console.warn('[LocalStorage] Gagal membaca file lokal, fallback ke memori:', err.message);
   }
+  return inMemoryClaims;
 }
 
 function writeLocalClaims(data) {
-  initLocalStore();
-  fs.writeFileSync(localDataFile, JSON.stringify(data, null, 2));
+  inMemoryClaims = data;
+  try {
+    initLocalStore();
+    fs.writeFileSync(localDataFile, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.warn('[LocalStorage] Gagal menulis ke disk lokal, tersimpan di memori:', err.message);
+  }
+}
+
+let detectedTable = null;
+
+async function getTargetTable() {
+  if (!supabase) return null;
+  if (detectedTable) return detectedTable;
+
+  try {
+    const { error } = await supabase.from('claims').select('id').limit(1);
+    if (!error) {
+      detectedTable = 'claims';
+      return 'claims';
+    }
+  } catch (e) {}
+
+  try {
+    const { error } = await supabase.from('vancare_claims').select('id').limit(1);
+    if (!error) {
+      detectedTable = 'vancare_claims';
+      return 'vancare_claims';
+    }
+  } catch (e) {}
+
+  detectedTable = 'claims';
+  return 'claims';
+}
+
+function mapToClaimsTable(claimData) {
+  const driveLinks = [];
+  if (claimData.photo_url) driveLinks.push(claimData.photo_url);
+  if (claimData.video_url && !driveLinks.includes(claimData.video_url)) driveLinks.push(claimData.video_url);
+  if (claimData.drive_file_url && !driveLinks.includes(claimData.drive_file_url)) driveLinks.push(claimData.drive_file_url);
+
+  return {
+    ticket_number: claimData.ticket_number,
+    nama_lengkap: claimData.customer_name || claimData.nama_lengkap || '',
+    nomor_hp: claimData.customer_phone || claimData.nomor_hp || '',
+    email: (claimData.customer_email || claimData.email || '').toLowerCase(),
+    alamat: claimData.customer_address || claimData.alamat || '',
+    kota: claimData.kota || claimData.customer_city || claimData.customer_address || '-',
+    kategori_produk: claimData.product_category || claimData.kategori_produk || '',
+    tipe_seri: claimData.product_name || claimData.tipe_seri || '',
+    nomor_seri: claimData.serial_number || claimData.nomor_seri || '',
+    kendala: claimData.issue_description || claimData.kendala || '',
+    status: claimData.status || 'Pending',
+    uploaded_files: Array.isArray(claimData.uploaded_files) ? claimData.uploaded_files : [],
+    drive_links: driveLinks,
+    created_at: claimData.created_at || new Date().toISOString()
+  };
+}
+
+function mapToVancareClaimsTable(claimData) {
+  return {
+    ticket_number: claimData.ticket_number,
+    customer_name: claimData.customer_name || claimData.nama_lengkap || '',
+    customer_email: (claimData.customer_email || claimData.email || '').toLowerCase(),
+    customer_phone: claimData.customer_phone || claimData.nomor_hp || '',
+    customer_address: claimData.customer_address || claimData.alamat || '',
+    product_category: claimData.product_category || claimData.kategori_produk || '',
+    product_name: claimData.product_name || claimData.tipe_seri || '',
+    serial_number: claimData.serial_number || claimData.nomor_seri || '',
+    purchase_date: claimData.purchase_date || null,
+    issue_description: claimData.issue_description || claimData.kendala || '',
+    uploaded_files: Array.isArray(claimData.uploaded_files) ? claimData.uploaded_files : [],
+    photo_file_id: claimData.photo_file_id || null,
+    photo_url: claimData.photo_url || null,
+    photo_file_name: claimData.photo_file_name || null,
+    video_file_id: claimData.video_file_id || null,
+    video_url: claimData.video_url || null,
+    video_file_name: claimData.video_file_name || null,
+    drive_file_id: claimData.drive_file_id || claimData.photo_file_id || claimData.video_file_id || null,
+    drive_file_url: claimData.drive_file_url || claimData.photo_url || claimData.video_url || null,
+    drive_file_name: claimData.drive_file_name || claimData.photo_file_name || claimData.video_file_name || null,
+    is_google_drive: typeof claimData.is_google_drive === 'boolean' ? claimData.is_google_drive : false,
+    status: claimData.status || 'PENDING',
+    created_at: claimData.created_at || new Date().toISOString()
+  };
+}
+
+function normalizeClaimRow(row) {
+  if (!row) return null;
+  const driveLinks = Array.isArray(row.drive_links) ? row.drive_links : [];
+  const uploadedFiles = Array.isArray(row.uploaded_files) ? row.uploaded_files : [];
+  const photoFile = uploadedFiles.find(f => f.type === 'photo');
+  const videoFile = uploadedFiles.find(f => f.type === 'video');
+
+  const photoUrl = (photoFile && photoFile.webViewLink) || driveLinks[0] || row.photo_url || row.drive_file_url || null;
+  const videoUrl = (videoFile && videoFile.webViewLink) || (driveLinks[1] || (driveLinks[0] !== photoUrl ? driveLinks[0] : null)) || row.video_url || null;
+
+  return {
+    ...row,
+    id: row.id,
+    ticket_number: row.ticket_number,
+    customer_name: row.nama_lengkap || row.customer_name || '',
+    customer_email: row.email || row.customer_email || '',
+    customer_phone: row.nomor_hp || row.customer_phone || '',
+    customer_address: row.alamat || row.customer_address || '',
+    kota: row.kota || '',
+    product_category: row.kategori_produk || row.product_category || '',
+    product_name: row.tipe_seri || row.product_name || '',
+    serial_number: row.nomor_seri || row.serial_number || '',
+    purchase_date: row.purchase_date || null,
+    issue_description: row.kendala || row.issue_description || '',
+    status: (row.status || 'PENDING').toUpperCase(),
+    uploaded_files: uploadedFiles,
+    drive_links: driveLinks,
+    photo_url: photoUrl,
+    video_url: videoUrl,
+    drive_file_url: photoUrl || videoUrl || row.drive_file_url || null,
+    admin_notes: row.admin_notes || null,
+    rejected_reason: row.rejected_reason || null,
+    created_at: row.created_at || new Date().toISOString(),
+    approved_at: row.approved_at || null
+  };
+}
+
+function applyIdOrTicketFilter(query, idOrTicket) {
+  const clean = String(idOrTicket).trim();
+  const isNumeric = /^\d+$/.test(clean);
+  if (isNumeric) {
+    return query.or(`id.eq.${clean},ticket_number.eq.${clean}`);
+  }
+  return query.eq('ticket_number', clean);
 }
 
 // ===============================================
@@ -104,23 +206,28 @@ function writeLocalClaims(data) {
 async function saveClaim(claimData) {
   const claimRecord = {
     ...claimData,
-    created_at: new Date().toISOString(),
+    created_at: claimData.created_at || new Date().toISOString(),
     status: claimData.status || 'PENDING'
   };
 
   if (supabase) {
     try {
+      const table = await getTargetTable();
+      const payload = table === 'claims'
+        ? mapToClaimsTable(claimRecord)
+        : mapToVancareClaimsTable(claimRecord);
+
       const { data, error } = await supabase
-        .from('vancare_claims')
-        .insert([claimRecord])
+        .from(table)
+        .insert([payload])
         .select()
         .single();
 
       if (error) {
-        console.error('[Supabase Error] insert claim:', error.message);
+        console.error(`[Supabase Error] insert claim to ${table}:`, error.message);
         throw error;
       }
-      return data;
+      return normalizeClaimRow(data);
     } catch (err) {
       console.warn('[Supabase Fallback] Mengalihkan ke penyimpanan lokal karena:', err.message);
     }
@@ -131,7 +238,7 @@ async function saveClaim(claimData) {
   claimRecord.id = String(Date.now());
   claims.unshift(claimRecord);
   writeLocalClaims(claims);
-  return claimRecord;
+  return normalizeClaimRow(claimRecord);
 }
 
 /**
@@ -140,27 +247,29 @@ async function saveClaim(claimData) {
 async function getAllClaims(filter = {}) {
   if (supabase) {
     try {
+      const table = await getTargetTable();
       let query = supabase
-        .from('vancare_claims')
+        .from(table)
         .select('*')
         .order('created_at', { ascending: false });
 
       if (filter.status && filter.status !== 'ALL') {
-        query = query.eq('status', filter.status);
+        query = query.ilike('status', filter.status);
       }
 
       const { data, error } = await query;
       if (error) throw error;
-      return data;
+      return (data || []).map(normalizeClaimRow);
     } catch (err) {
       console.warn('[Supabase Fallback] Mengambil dari lokal:', err.message);
     }
   }
 
   // Dari penyimpanan lokal
-  let claims = readLocalClaims();
+  let claims = readLocalClaims().map(normalizeClaimRow);
   if (filter.status && filter.status !== 'ALL') {
-    claims = claims.filter(c => c.status === filter.status);
+    const targetStatus = filter.status.toUpperCase();
+    claims = claims.filter(c => (c.status || '').toUpperCase() === targetStatus);
   }
   return claims;
 }
@@ -171,20 +280,20 @@ async function getAllClaims(filter = {}) {
 async function getClaimById(idOrTicket) {
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('vancare_claims')
-        .select('*')
-        .or(`id.eq.${idOrTicket},ticket_number.eq.${idOrTicket}`)
-        .single();
+      const table = await getTargetTable();
+      let query = supabase.from(table).select('*');
+      query = applyIdOrTicketFilter(query, idOrTicket);
 
-      if (!error && data) return data;
+      const { data, error } = await query.maybeSingle();
+      if (!error && data) return normalizeClaimRow(data);
     } catch (err) {
-      // Abaikan dan cari di lokal
+      console.warn('[Supabase Fallback] Gagal getClaimById:', err.message);
     }
   }
 
-  const claims = readLocalClaims();
-  return claims.find(c => String(c.id) === String(idOrTicket) || c.ticket_number === idOrTicket) || null;
+  const claims = readLocalClaims().map(normalizeClaimRow);
+  const cleanId = String(idOrTicket).trim();
+  return claims.find(c => String(c.id) === cleanId || c.ticket_number === cleanId) || null;
 }
 
 /**
@@ -195,26 +304,35 @@ async function approveClaim(idOrTicket, notes = '') {
 
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('vancare_claims')
-        .update({
-          status: 'APPROVED',
-          approved_at: approvedAt,
-          admin_notes: notes
-        })
-        .or(`id.eq.${idOrTicket},ticket_number.eq.${idOrTicket}`)
-        .select()
-        .single();
+      const table = await getTargetTable();
+      let query = supabase.from(table).update({
+        status: 'APPROVED',
+        approved_at: approvedAt,
+        admin_notes: notes
+      });
+      query = applyIdOrTicketFilter(query, idOrTicket);
 
-      if (!error && data) return data;
+      let { data, error } = await query.select();
+      if (error && error.code === 'PGRST204') {
+        let retryQuery = supabase.from(table).update({ status: 'APPROVED' });
+        retryQuery = applyIdOrTicketFilter(retryQuery, idOrTicket);
+        const retryRes = await retryQuery.select();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
+
+      if (!error && data && data.length > 0) {
+        return normalizeClaimRow(data[0]);
+      }
     } catch (err) {
-      console.warn('[Supabase Fallback] Gagal update Supabase:', err.message);
+      console.warn('[Supabase Fallback] Gagal update approve Supabase:', err.message);
     }
   }
 
   // Update di lokal
   const claims = readLocalClaims();
-  const index = claims.findIndex(c => String(c.id) === String(idOrTicket) || c.ticket_number === idOrTicket);
+  const cleanId = String(idOrTicket).trim();
+  const index = claims.findIndex(c => String(c.id) === cleanId || c.ticket_number === cleanId);
   if (index === -1) {
     throw new Error('Data klaim tidak ditemukan');
   }
@@ -224,7 +342,7 @@ async function approveClaim(idOrTicket, notes = '') {
   if (notes) claims[index].admin_notes = notes;
 
   writeLocalClaims(claims);
-  return claims[index];
+  return normalizeClaimRow(claims[index]);
 }
 
 /**
@@ -233,24 +351,33 @@ async function approveClaim(idOrTicket, notes = '') {
 async function rejectClaim(idOrTicket, reason = '') {
   if (supabase) {
     try {
-      const { data, error } = await supabase
-        .from('vancare_claims')
-        .update({
-          status: 'REJECTED',
-          rejected_reason: reason
-        })
-        .or(`id.eq.${idOrTicket},ticket_number.eq.${idOrTicket}`)
-        .select()
-        .single();
+      const table = await getTargetTable();
+      let query = supabase.from(table).update({
+        status: 'REJECTED',
+        rejected_reason: reason
+      });
+      query = applyIdOrTicketFilter(query, idOrTicket);
 
-      if (!error && data) return data;
+      let { data, error } = await query.select();
+      if (error && error.code === 'PGRST204') {
+        let retryQuery = supabase.from(table).update({ status: 'REJECTED' });
+        retryQuery = applyIdOrTicketFilter(retryQuery, idOrTicket);
+        const retryRes = await retryQuery.select();
+        data = retryRes.data;
+        error = retryRes.error;
+      }
+
+      if (!error && data && data.length > 0) {
+        return normalizeClaimRow(data[0]);
+      }
     } catch (err) {
       console.warn('[Supabase Fallback] Gagal reject Supabase:', err.message);
     }
   }
 
   const claims = readLocalClaims();
-  const index = claims.findIndex(c => String(c.id) === String(idOrTicket) || c.ticket_number === idOrTicket);
+  const cleanId = String(idOrTicket).trim();
+  const index = claims.findIndex(c => String(c.id) === cleanId || c.ticket_number === cleanId);
   if (index === -1) {
     throw new Error('Data klaim tidak ditemukan');
   }
@@ -259,7 +386,7 @@ async function rejectClaim(idOrTicket, reason = '') {
   claims[index].rejected_reason = reason;
 
   writeLocalClaims(claims);
-  return claims[index];
+  return normalizeClaimRow(claims[index]);
 }
 
 /**
@@ -269,9 +396,9 @@ async function getStats() {
   const claims = await getAllClaims();
   return {
     total: claims.length,
-    pending: claims.filter(c => c.status === 'PENDING').length,
-    approved: claims.filter(c => c.status === 'APPROVED').length,
-    rejected: claims.filter(c => c.status === 'REJECTED').length
+    pending: claims.filter(c => (c.status || '').toUpperCase() === 'PENDING').length,
+    approved: claims.filter(c => (c.status || '').toUpperCase() === 'APPROVED').length,
+    rejected: claims.filter(c => (c.status || '').toUpperCase() === 'REJECTED').length
   };
 }
 

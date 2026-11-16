@@ -623,11 +623,15 @@ app.use((err, req, res, next) => {
 });
 
 // Start Server
-app.listen(PORT, () => {
-  console.log(`================================================================`);
-  console.log(`🚀 VANCARE ADVAN WARRANTY SYSTEM SERVER AKTIF`);
-  console.log(`📍 URL Formulir Pelanggan : http://localhost:${PORT}`);
-  console.log(`📍 URL Dashboard Admin   : http://localhost:${PORT}/admin`);
-  console.log(`📁 Upload Dir Bukti     : http://localhost:${PORT}/uploads`);
-  console.log(`================================================================`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`================================================================`);
+    console.log(`🚀 VANCARE ADVAN WARRANTY SYSTEM SERVER AKTIF`);
+    console.log(`📍 URL Formulir Pelanggan : http://localhost:${PORT}`);
+    console.log(`📍 URL Dashboard Admin   : http://localhost:${PORT}/admin`);
+    console.log(`📁 Upload Dir Bukti     : http://localhost:${PORT}/uploads`);
+    console.log(`================================================================`);
+  });
+}
+
+module.exports = app;

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { Readable } = require('stream');
 const { google } = require('googleapis');
 
@@ -111,9 +112,17 @@ async function uploadFileToDrive(file) {
   }
 
   // --- FALLBACK LOCAL STORAGE ---
-  const uploadDir = path.join(__dirname, '..', 'public', 'uploads');
-  if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
+  const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const uploadDir = isServerless
+    ? path.join(os.tmpdir(), 'vancare_uploads')
+    : path.join(__dirname, '..', 'public', 'uploads');
+
+  try {
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+  } catch (dirErr) {
+    console.warn('[Google Drive Fallback] Tidak dapat membuat direktori uploads lokal:', dirErr.message);
   }
 
   const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
@@ -121,8 +130,12 @@ async function uploadFileToDrive(file) {
   const localFileName = `proof-${uniqueSuffix}${ext}`;
   const localFilePath = path.join(uploadDir, localFileName);
 
-  fs.writeFileSync(localFilePath, file.buffer);
-  console.log(`[Penyimpanan Lokal] Bukti disimpan di ${localFilePath}`);
+  try {
+    fs.writeFileSync(localFilePath, file.buffer);
+    console.log(`[Penyimpanan Lokal] Bukti disimpan di ${localFilePath}`);
+  } catch (writeErr) {
+    console.warn('[Google Drive Fallback] Gagal menyimpan file ke disk lokal:', writeErr.message);
+  }
 
   return {
     fileId: `local-${uniqueSuffix}`,
