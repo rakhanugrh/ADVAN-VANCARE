@@ -1,5 +1,8 @@
 const nodemailer = require('nodemailer');
 
+const APP_BASE_URL = (process.env.APP_URL || 'https://advan-vancare.vercel.app').replace(/\/$/, '');
+const LOGO_URL = `${APP_BASE_URL}/images/advan-header.png`;
+
 /**
  * Buat transporter Nodemailer untuk Gmail SMTP
  */
@@ -78,8 +81,14 @@ async function sendClaimReceivedEmail(claim) {
   <body>
     <div class="container">
       <div class="header">
-        <h1>VANCARE ADVAN</h1>
-        <p>Pusat Layanan Garansi & Perbaikan Resmi</p>
+        <div style="text-align: center; margin-bottom: 12px;">
+          <img src="${LOGO_URL}" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
+          <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ffffff; margin-top: 4px;">
+            VAN<span style="color: #e6007e;">CARE</span>
+          </div>
+        </div>
+        <h1 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 700; color: #ffffff;">PENERIMAAN TIKET KLAIM GARANSI</h1>
+        <p style="margin: 0; font-size: 13px; opacity: 0.9; color: #cbd5e1;">Pusat Layanan Garansi & Perbaikan Resmi</p>
         <div class="badge-ticket">No. Tiket: ${claim.ticket_number}</div>
       </div>
       <div class="content">
@@ -158,8 +167,8 @@ async function sendClaimApprovalEmail(claim) {
       .card-ticket td.val { color: #0f172a; font-weight: 600; }
       .steps-box { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 20px; margin: 25px 0; }
       .steps-box h3 { margin: 0 0 12px 0; color: #166534; font-size: 16px; }
-      .step-item { display: flex; margin-bottom: 12px; font-size: 14px; color: #1e293b; }
-      .step-num { background: #e6007e; color: #fff; width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; margin-right: 12px; flex-shrink: 0; }
+      .step-item { display: flex; align-items: baseline; margin-bottom: 12px; font-size: 14px; color: #1e293b; line-height: 1.6; }
+      .step-num { font-size: 14px; color: #1e293b; font-weight: normal; margin-right: 8px; flex-shrink: 0; }
       .service-center { background: #fdf2f8; border-left: 4px solid #e6007e; padding: 15px; border-radius: 6px; margin-top: 20px; font-size: 13px; line-height: 1.6; color: #831843; }
       .footer { background: #070e24; color: #94a3b8; text-align: center; padding: 25px 20px; font-size: 12px; line-height: 1.6; }
       .footer strong { color: #f8fafc; }
@@ -168,9 +177,14 @@ async function sendClaimApprovalEmail(claim) {
   <body>
     <div class="container">
       <div class="header">
-        <div class="header-icon">✅</div>
+        <div style="text-align: center; margin-bottom: 12px;">
+          <img src="${LOGO_URL}" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
+          <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ffffff; margin-top: 4px;">
+            VAN<span style="color: #e6007e;">CARE</span>
+          </div>
+        </div>
         <h1>KLAIM GARANSI DISETUJUI</h1>
-        <p style="margin: 0; opacity: 0.95; font-size: 14px;">Layanan Purna Jual Resmi VANCARE Advan</p>
+        <p style="margin: 0; opacity: 0.95; font-size: 13px;">Layanan Purna Jual Resmi VANCARE Advan</p>
         <div class="badge-approved">STATUS: APPROVED</div>
       </div>
       
@@ -193,15 +207,15 @@ async function sendClaimApprovalEmail(claim) {
         <div class="steps-box">
           <h3>Panduan Langkah Penanganan Unit:</h3>
           <div class="step-item">
-            <span class="step-num">1</span>
+            <span class="step-num">1.</span>
             <div><strong>Cetak / Simpan Nomor Tiket:</strong> Tunjukkan email ini atau catat nomor tiket <strong>${claim.ticket_number}</strong> saat menyerahkan unit.</div>
           </div>
           <div class="step-item">
-            <span class="step-num">2</span>
+            <span class="step-num">2.</span>
             <div><strong>Kelengkapan Unit:</strong> Sertakan unit perangkat beserta aksesoris bawaan (charger/kabel) dan kartu garansi/faktur pembelian (jika ada).</div>
           </div>
           <div class="step-item">
-            <span class="step-num">3</span>
+            <span class="step-num">3.</span>
             <div><strong>Kunjungan atau Pengiriman:</strong> Anda dapat langsung datang ke Service Center VANCARE terdekat atau mengirimkan unit via kurir/ekspedisi yang aman.</div>
           </div>
         </div>
@@ -279,8 +293,14 @@ async function sendClaimRejectionEmail(claim) {
   <body>
     <div class="container">
       <div class="header">
-        <h1>KLAIM GARANSI TIDAK DAPAT DISETUJUI</h1>
-        <p style="margin: 0; font-size: 13px; opacity: 0.85;">Pemberitahuan Status Klaim VANCARE Advan</p>
+        <div style="text-align: center; margin-bottom: 12px;">
+          <img src="${LOGO_URL}" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
+          <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ffffff; margin-top: 4px;">
+            VAN<span style="color: #e6007e;">CARE</span>
+          </div>
+        </div>
+        <h1 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 700; color: #f43f5e;">KLAIM GARANSI TIDAK DAPAT DISETUJUI</h1>
+        <p style="margin: 0; font-size: 13px; opacity: 0.85; color: #cbd5e1;">Pemberitahuan Status Klaim VANCARE Advan</p>
         <div class="badge-rejected">STATUS: DITOLAK (REJECTED)</div>
       </div>
       <div class="content">

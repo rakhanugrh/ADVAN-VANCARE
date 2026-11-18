@@ -1,0 +1,10 @@
+config:
+  target: "https://advan-vancare.vercel.app"
+  phases:
+    - duration: 20
+      arrivalRate: 5
+      rampTo: 20
+scenarios:
+  - flow:
+      - get:
+          url: "/"
