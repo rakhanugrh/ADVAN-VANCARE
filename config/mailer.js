@@ -1,7 +1,13 @@
 const nodemailer = require('nodemailer');
+const advanLogoBase64 = require('./advanLogoBase64');
 
-const APP_BASE_URL = (process.env.APP_URL || 'https://advan-vancare.vercel.app').replace(/\/$/, '');
-const LOGO_URL = `${APP_BASE_URL}/images/advan-header.png`;
+const LOGO_ATTACHMENT = [
+  {
+    filename: 'advan-header.png',
+    content: Buffer.from(advanLogoBase64, 'base64'),
+    cid: 'advanLogo'
+  }
+];
 
 /**
  * Buat transporter Nodemailer untuk Gmail SMTP
@@ -82,7 +88,7 @@ async function sendClaimReceivedEmail(claim) {
     <div class="container">
       <div class="header">
         <div style="text-align: center; margin-bottom: 12px;">
-          <img src="${LOGO_URL}" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
+          <img src="cid:advanLogo" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
           <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ffffff; margin-top: 4px;">
             VAN<span style="color: #e6007e;">CARE</span>
           </div>
@@ -127,7 +133,8 @@ async function sendClaimReceivedEmail(claim) {
       from: `"${fromName}" <${fromAddress}>`,
       to: claim.customer_email,
       subject: `[VANCARE ADVAN] Penerimaan Tiket Klaim Garansi #${claim.ticket_number} - ${claim.product_name}`,
-      html: htmlContent
+      html: htmlContent,
+      attachments: LOGO_ATTACHMENT
     });
     console.log(`[Mailer] Email tanda terima berhasil terkirim: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
@@ -178,7 +185,7 @@ async function sendClaimApprovalEmail(claim) {
     <div class="container">
       <div class="header">
         <div style="text-align: center; margin-bottom: 12px;">
-          <img src="${LOGO_URL}" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
+          <img src="cid:advanLogo" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
           <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ffffff; margin-top: 4px;">
             VAN<span style="color: #e6007e;">CARE</span>
           </div>
@@ -252,7 +259,8 @@ async function sendClaimApprovalEmail(claim) {
       from: `"${fromName}" <${fromAddress}>`,
       to: claim.customer_email,
       subject: `[KLAIM DISETUJUI] Permohonan Garansi VANCARE Advan #${claim.ticket_number}`,
-      html: htmlContent
+      html: htmlContent,
+      attachments: LOGO_ATTACHMENT
     });
     console.log(`[Mailer] Notifikasi Approval berhasil terkirim ke ${claim.customer_email}: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
@@ -294,7 +302,7 @@ async function sendClaimRejectionEmail(claim) {
     <div class="container">
       <div class="header">
         <div style="text-align: center; margin-bottom: 12px;">
-          <img src="${LOGO_URL}" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
+          <img src="cid:advanLogo" alt="ADVAN" style="height: 48px; max-width: 180px; width: auto; object-fit: contain; display: inline-block;">
           <div style="font-size: 22px; font-weight: 900; letter-spacing: 2px; color: #ffffff; margin-top: 4px;">
             VAN<span style="color: #e6007e;">CARE</span>
           </div>
@@ -341,7 +349,8 @@ async function sendClaimRejectionEmail(claim) {
       from: `"${fromName}" <${fromAddress}>`,
       to: claim.customer_email,
       subject: `[STATUS KLAIM] Pemberitahuan Klaim Garansi VANCARE Advan #${claim.ticket_number}`,
-      html: htmlContent
+      html: htmlContent,
+      attachments: LOGO_ATTACHMENT
     });
     console.log(`[Mailer] Notifikasi penolakan berhasil terkirim ke ${claim.customer_email}: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
