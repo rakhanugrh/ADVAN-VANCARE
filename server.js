@@ -78,8 +78,38 @@ function generateTicketNumber() {
 // ===============================================
 // SISTEM AUTENTIKASI ADMIN
 // ===============================================
+// SISTEM AUTENTIKASI ADMIN (Stateless HMAC Token untuk Vercel / Multi-Instance)
+// ===============================================
 
-const adminTokens = new Map(); // token -> { username, createdAt }
+const JWT_SECRET = process.env.SESSION_SECRET || 'vancare_advan_secret_session_2026';
+
+function generateAdminToken(username) {
+  const payload = {
+    username,
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // Berlaku 7 hari
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto.createHmac('sha256', JWT_SECRET).update(payloadB64).digest('base64url');
+  return `${payloadB64}.${signature}`;
+}
+
+function verifyAdminToken(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
+  if (parts.length !== 2) return null;
+
+  const [payloadB64, signature] = parts;
+  const expectedSig = crypto.createHmac('sha256', JWT_SECRET).update(payloadB64).digest('base64url');
+  if (signature !== expectedSig) return null;
+
+  try {
+    const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    if (payload.exp && Date.now() > payload.exp) return null;
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
 
 // Middleware: Validasi token admin
 function requireAdminAuth(req, res, next) {
@@ -88,10 +118,11 @@ function requireAdminAuth(req, res, next) {
     return res.status(401).json({ success: false, message: 'Unauthorized: Token tidak ditemukan.' });
   }
   const token = auth.slice(7);
-  if (!adminTokens.has(token)) {
-    return res.status(401).json({ success: false, message: 'Unauthorized: Token tidak valid atau sudah kadaluarsa.' });
+  const session = verifyAdminToken(token);
+  if (!session) {
+    return res.status(401).json({ success: false, message: 'Unauthorized: Sesi login sudah kadaluarsa. Silakan login kembali.' });
   }
-  req.adminUser = adminTokens.get(token);
+  req.adminUser = session;
   next();
 }
 
@@ -121,8 +152,7 @@ app.post('/api/auth/login', (req, res) => {
   const validPass = process.env.ADMIN_PASSWORD || 'admin123';
 
   if (username === validUser && password === validPass) {
-    const token = crypto.randomBytes(32).toString('hex');
-    adminTokens.set(token, { username, createdAt: Date.now() });
+    const token = generateAdminToken(username);
     console.log(`[Auth] Login berhasil: ${username}`);
     return res.json({ success: true, token, user: { username } });
   }
@@ -137,20 +167,13 @@ app.get('/api/auth/verify', (req, res) => {
     return res.json({ success: true, valid: false });
   }
   const token = auth.slice(7);
-  const session = adminTokens.get(token);
+  const session = verifyAdminToken(token);
   if (!session) return res.json({ success: true, valid: false });
   return res.json({ success: true, valid: true, user: { username: session.username } });
 });
 
 // API: Logout Admin
 app.post('/api/auth/logout', (req, res) => {
-  const auth = req.headers.authorization;
-  if (auth && auth.startsWith('Bearer ')) {
-    const token = auth.slice(7);
-    const session = adminTokens.get(token);
-    if (session) console.log(`[Auth] Logout: ${session.username}`);
-    adminTokens.delete(token);
-  }
   return res.json({ success: true });
 });
 
@@ -324,10 +347,12 @@ app.post('/api/claims', upload.fields([
     const savedClaim = await saveClaim(newClaimData);
     console.log(`[Claim API] Klaim berhasil disimpan dengan nomor tiket: ${ticketNumber}`);
 
-    // 4. Kirim notifikasi email tanda terima otomatis ke pelanggan
-    sendClaimReceivedEmail(savedClaim).catch(mailErr => {
-      console.error('[Claim API] Background email error:', mailErr.message);
-    });
+    // 4. Kirim notifikasi email tanda terima otomatis ke pelanggan (WAJIB di-await agar tidak dihentikan serverless Vercel)
+    try {
+      await sendClaimReceivedEmail(savedClaim);
+    } catch (mailErr) {
+      console.error('[Claim API] Error mengirim email tanda terima:', mailErr.message);
+    }
 
     return res.status(201).json({
       success: true,
@@ -464,10 +489,12 @@ app.post('/api/claims/:id/reject', requireAdminAuth, async (req, res) => {
       });
     }
 
-    // Kirim email notifikasi penolakan ke pelanggan
-    sendClaimRejectionEmail(updatedClaim).catch(mailErr => {
+    // Kirim email notifikasi penolakan ke pelanggan (WAJIB di-await agar tidak dihentikan serverless Vercel)
+    try {
+      await sendClaimRejectionEmail(updatedClaim);
+    } catch (mailErr) {
       console.error('[Admin API] Background rejection email error:', mailErr.message);
-    });
+    }
 
     return res.json({
       success: true,

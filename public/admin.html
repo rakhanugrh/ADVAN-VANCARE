@@ -293,10 +293,19 @@
         const resStats = await fetch('/api/stats', { headers: getAuthHeader() });
         const dataStats = await resStats.json();
 
+        if (resClaims.status === 401) {
+          localStorage.removeItem('vancare_admin_token');
+          localStorage.removeItem('vancare_admin_user');
+          window.location.replace('/login');
+          return;
+        }
+
         if (dataClaims.success) {
-          allClaims = dataClaims.data;
+          allClaims = dataClaims.data || [];
           renderStats(dataStats.stats || {});
           renderTable();
+        } else {
+          console.error('Error load claims:', dataClaims.message);
         }
       } catch (err) {
         console.error('Error load claims:', err);
