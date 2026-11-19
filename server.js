@@ -6,6 +6,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const csv = require('csv-parser');
 const { Readable } = require('stream');
+const rateLimit = require('express-rate-limit');
 
 const {
   uploadFileToDrive,
@@ -24,6 +25,35 @@ const {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Penting karena aplikasi di-deploy di Vercel (di balik reverse proxy)
+app.set('trust proxy', 1);
+
+// 1. Limiter khusus login admin (anti brute-force)
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 menit
+  max: 5, // maksimal 5 percobaan per IP dalam 15 menit
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Terlalu banyak percobaan login. Coba lagi 15 menit lagi.',
+    message: 'Terlalu banyak percobaan login. Coba lagi 15 menit lagi.'
+  }
+});
+
+// 2. Limiter khusus kirim klaim / upload media (anti spam klaim & abuse kuota)
+const claimLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 menit
+  max: 15, // maksimal 15 submit klaim per IP dalam 10 menit
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Batas pengiriman klaim tercapai. Silakan tunggu beberapa menit.',
+    message: 'Batas pengiriman klaim tercapai. Silakan tunggu beberapa menit.'
+  }
+});
 const MAX_CLAIM_FILE_SIZE = 200 * 1024 * 1024;
 const ALLOWED_CLAIM_MIME_TYPES = [
   'image/jpeg',
@@ -145,8 +175,8 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// API: Login Admin
-app.post('/api/auth/login', (req, res) => {
+// API: Login Admin (mendukung /api/auth/login & /api/admin/login dengan rate limiting)
+app.post(['/api/auth/login', '/api/admin/login'], loginLimiter, (req, res) => {
   const { username, password } = req.body || {};
   const validUser = process.env.ADMIN_USERNAME || 'admin';
   const validPass = process.env.ADMIN_PASSWORD || 'admin123';
@@ -187,7 +217,7 @@ app.post('/api/auth/logout', (req, res) => {
  * Menerima data pelanggan + file foto/video bukti kerusakan,
  * upload ke Google Drive, simpan ke database, dan kirim email tanda terima.
  */
-app.post('/api/claims', upload.fields([
+app.post('/api/claims', claimLimiter, upload.fields([
   { name: 'proof_photo', maxCount: 1 },
   { name: 'proof_video', maxCount: 1 },
   { name: 'proof_file', maxCount: 1 }
