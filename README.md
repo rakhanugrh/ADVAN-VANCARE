@@ -70,8 +70,8 @@ npm run dev
 ```
 
 ### 4. Buka di Browser
-- **Formulir Klaim Pelanggan:** [http://localhost:3000](http://localhost:3000)
-- **Dashboard Admin VANCARE:** [http://localhost:3000/admin](http://localhost:3000/admin)
+- **Formulir Klaim Pelanggan:**
+- **Dashboard Admin VANCARE:** 
 
 ---
 
