@@ -796,9 +796,10 @@
           });
         }
       } catch (err) {
+        const isDriveAuthorizationError = err.message.includes('Otorisasi Google Drive');
         Swal.fire({
           icon: 'error',
-          title: 'Error Koneksi',
+          title: isDriveAuthorizationError ? 'Google Drive Perlu Diotorisasi' : 'Error Koneksi',
           text: err.message || 'Tidak dapat menghubungi server. Coba beberapa saat lagi.',
           background: '#12141e',
           color: '#ffffff',

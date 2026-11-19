@@ -46,7 +46,7 @@ PORT=3000
 
 # Supabase (Dapatkan dari https://supabase.com -> Project Settings -> API)
 SUPABASE_URL=https://your-project-id.supabase.co
-SUPABASE_KEY=your-supabase-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 
 # Google Drive (ID Folder tujuan penyimpanan 400GB)
 GOOGLE_APPLICATION_CREDENTIALS=credentials.json

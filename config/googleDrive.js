@@ -154,6 +154,10 @@ async function createResumableSession({ fileName, mimeType, fileSize, origin }) 
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
   const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
 
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('Integrasi Google Drive belum dikonfigurasi. Lengkapi GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, dan GOOGLE_REFRESH_TOKEN.');
+  }
+
   const oauth2Client = new google.auth.OAuth2(
     clientId,
     clientSecret,
@@ -161,7 +165,16 @@ async function createResumableSession({ fileName, mimeType, fileSize, origin }) 
   );
   oauth2Client.setCredentials({ refresh_token: refreshToken });
 
-  const { token } = await oauth2Client.getAccessToken();
+  let token;
+  try {
+    ({ token } = await oauth2Client.getAccessToken());
+  } catch (err) {
+    const errorCode = err.response?.data?.error || err.code || err.message;
+    if (errorCode === 'invalid_grant') {
+      throw new Error('Otorisasi Google Drive kedaluwarsa atau dicabut. Perbarui GOOGLE_REFRESH_TOKEN.');
+    }
+    throw err;
+  }
   const sanitizedName = `VANCARE_${Date.now()}_${fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
 
   const metadata = {

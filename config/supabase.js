@@ -5,7 +5,9 @@ const os = require('os');
 
 // Cek apakah konfigurasi Supabase valid
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_KEY;
+const supabaseKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_KEY;
 
 const isSupabaseConfigured =
   supabaseUrl &&
@@ -17,7 +19,12 @@ let supabase = null;
 
 if (isSupabaseConfigured) {
   try {
-    supabase = createClient(supabaseUrl, supabaseKey);
+    supabase = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    });
     console.log('[Supabase] Terhubung ke Supabase Database:', supabaseUrl);
   } catch (err) {
     console.error('[Supabase] Gagal inisialisasi Supabase:', err.message);
