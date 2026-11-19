@@ -178,8 +178,15 @@ app.get('/admin', (req, res) => {
 // API: Login Admin (mendukung /api/auth/login & /api/admin/login dengan rate limiting)
 app.post(['/api/auth/login', '/api/admin/login'], loginLimiter, (req, res) => {
   const { username, password } = req.body || {};
-  const validUser = process.env.ADMIN_USERNAME || 'admin';
-  const validPass = process.env.ADMIN_PASSWORD || 'admin123';
+  const validUser = process.env.ADMIN_USERNAME;
+  const validPass = process.env.ADMIN_PASSWORD;
+
+  if (!validUser || !validPass) {
+    return res.status(503).json({
+      success: false,
+      message: 'Login admin belum dikonfigurasi pada server.'
+    });
+  }
 
   if (username === validUser && password === validPass) {
     const token = generateAdminToken(username);

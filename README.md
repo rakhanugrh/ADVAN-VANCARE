@@ -56,6 +56,11 @@ GOOGLE_DRIVE_FOLDER_ID=your_shared_drive_folder_id
 EMAIL_USER=vancare.advan@gmail.com
 EMAIL_PASS=your_gmail_app_password
 EMAIL_FROM_NAME="VANCARE Advan Customer Care"
+
+# Kredensial Login Admin Dashboard
+ADMIN_USERNAME=nama_pengguna_anda
+ADMIN_PASSWORD=sandi_kuat_anda
+SESSION_SECRET=rahasia_sesi_yang_panjang_dan_acak
 ```
 
 > **Catatan:** Jika Supabase, Google Drive, atau Gmail belum disetup secara penuh, aplikasi memiliki **Built-in Fallback System** (penyimpanan lokal dan log simulasi) sehingga aplikasi **dapat langsung diuji tanpa error**!
