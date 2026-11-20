@@ -211,8 +211,19 @@ function applyIdOrTicketFilter(query, idOrTicket) {
  * Simpan klaim baru
  */
 async function saveClaim(claimData) {
+  const getLocalDateString = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
   const claimRecord = {
     ...claimData,
+    purchase_date: claimData.purchase_date && String(claimData.purchase_date).trim()
+      ? String(claimData.purchase_date).trim()
+      : getLocalDateString(),
     created_at: claimData.created_at || new Date().toISOString(),
     status: claimData.status || 'PENDING'
   };

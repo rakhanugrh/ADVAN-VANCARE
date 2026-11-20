@@ -105,6 +105,14 @@ function generateTicketNumber() {
   return `VC-${dateStr}-${randomSuffix}`;
 }
 
+function getLocalDateString() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // ===============================================
 // SISTEM AUTENTIKASI ADMIN
 // ===============================================
@@ -243,10 +251,40 @@ app.post('/api/claims', claimLimiter, upload.fields([
     } = req.body;
 
     // Validasi field wajib
-    if (!customer_name || !customer_email || !customer_phone || !product_name || !serial_number || !issue_description) {
+    const requiredFields = {
+      customer_name,
+      customer_email,
+      customer_phone,
+      customer_address,
+      product_category,
+      product_name,
+      serial_number,
+      purchase_date,
+      issue_description
+    };
+    const missingFields = Object.entries(requiredFields)
+      .filter(([, value]) => typeof value !== 'string' || value.trim() === '')
+      .map(([field]) => field);
+
+    if (missingFields.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Mohon lengkapi semua data wajib: Nama, Email, Telepon, Kategori & Tipe Produk, Serial Number, dan Deskripsi Kendala.'
+        message: `Mohon lengkapi semua data wajib sebelum mengirim formulir: ${missingFields.join(', ')}.`
+      });
+    }
+
+    const purchaseDateValue = purchase_date.trim();
+    const dateParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(purchaseDateValue);
+    const parsedPurchaseDate = dateParts
+      ? new Date(Date.UTC(Number(dateParts[1]), Number(dateParts[2]) - 1, Number(dateParts[3])))
+      : null;
+    if (!parsedPurchaseDate ||
+        parsedPurchaseDate.getUTCFullYear() !== Number(dateParts[1]) ||
+        parsedPurchaseDate.getUTCMonth() !== Number(dateParts[2]) - 1 ||
+        parsedPurchaseDate.getUTCDate() !== Number(dateParts[3])) {
+      return res.status(400).json({
+        success: false,
+        message: 'Tanggal pembelian tidak valid. Harap pilih tanggal secara manual.'
       });
     }
 
@@ -361,7 +399,7 @@ app.post('/api/claims', claimLimiter, upload.fields([
       product_category: (product_category || 'Perangkat').trim(),
       product_name: product_name.trim(),
       serial_number: serial_number.trim().toUpperCase(),
-      purchase_date: purchase_date || null,
+      purchase_date: purchaseDateValue,
       issue_description: issue_description.trim(),
       uploaded_files: uploadedFiles,
       // Foto Bukti
@@ -596,7 +634,9 @@ app.post('/api/admin/import-csv', requireAdminAuth, csvUpload.single('file'), as
             product_category: (row.product_category || 'Perangkat').trim(),
             product_name: (row.product_name || row.product_model || '').trim(),
             serial_number: (row.serial_number || '').trim().toUpperCase(),
-            purchase_date: row.purchase_date || null,
+            purchase_date: row.purchase_date && String(row.purchase_date).trim()
+              ? String(row.purchase_date).trim()
+              : getLocalDateString(),
             issue_description: (row.issue_description || row.problem_description || '-').trim(),
             status: (row.status || 'PENDING').trim().toUpperCase()
           };
