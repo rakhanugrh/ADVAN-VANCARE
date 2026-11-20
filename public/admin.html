@@ -74,10 +74,17 @@
           <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
           <span>Form Pelanggan</span>
         </a>
-        <button id="refreshBtn" onclick="loadClaimsData()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-3 py-1.5 rounded-md transition flex items-center gap-1.5 border border-slate-700">
+        <button id="refreshBtn" onclick="manualRefresh()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white px-3 py-1.5 rounded-md transition flex items-center gap-1.5 border border-slate-700">
           <i class="fa-solid fa-rotate text-[11px]" id="refreshIcon"></i>
-          <span>Refresh</span>
+          <span id="refreshText">Refresh</span>
         </button>
+        <span id="autoRefreshStatus" class="hidden lg:inline-flex items-center gap-1.5 text-[10px] text-emerald-400" title="Dashboard diperbarui otomatis">
+          <span class="relative flex h-2 w-2">
+            <span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-40"></span>
+            <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
+          </span>
+          <span id="autoRefreshLabel">Live - 30 dtk</span>
+        </span>
         <button onclick="doLogout()" class="text-xs bg-rose-900/40 hover:bg-rose-900/70 text-rose-300 px-3 py-1.5 rounded-md border border-rose-800/50 transition flex items-center gap-1.5">
           <i class="fa-solid fa-right-from-bracket text-[10px]"></i>
           <span>Logout</span>
@@ -226,6 +233,9 @@
     let searchQuery = '';
     let isLoadingClaimsData = false;
     const AUTO_REFRESH_INTERVAL_MS = 30 * 1000;
+    let secondsUntilRefresh = 30;
+    let autoRefreshIntervalId = null;
+    let countdownIntervalId = null;
 
     document.addEventListener('DOMContentLoaded', async () => {
       // --- AUTH GUARD ---
@@ -257,13 +267,52 @@
         window.location.replace('/login');
         return;
       }
-      // Auth OK — muat data
-      loadClaimsData();
-      // Refresh otomatis setiap 30 detik selama dashboard sedang terlihat.
-      window.setInterval(() => {
-        if (document.visibilityState === 'visible') loadClaimsData();
-      }, AUTO_REFRESH_INTERVAL_MS);
+      // Auth OK - muat data lalu aktifkan refresh live.
+      await loadClaimsData();
+      startAutoRefresh();
+
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          secondsUntilRefresh = 30;
+          loadClaimsData();
+        }
+      });
     });
+
+    function startAutoRefresh() {
+      if (autoRefreshIntervalId) clearInterval(autoRefreshIntervalId);
+      if (countdownIntervalId) clearInterval(countdownIntervalId);
+
+      secondsUntilRefresh = 30;
+      updateAutoRefreshLabel();
+
+      countdownIntervalId = window.setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        secondsUntilRefresh = Math.max(0, secondsUntilRefresh - 1);
+        updateAutoRefreshLabel();
+      }, 1000);
+
+      autoRefreshIntervalId = window.setInterval(() => {
+        if (document.visibilityState === 'visible') {
+          loadClaimsData();
+        }
+      }, AUTO_REFRESH_INTERVAL_MS);
+    }
+
+    function updateAutoRefreshLabel() {
+      const label = document.getElementById('autoRefreshLabel');
+      if (label) label.textContent = `Live - ${secondsUntilRefresh} dtk`;
+    }
+
+    function resetRefreshCountdown() {
+      secondsUntilRefresh = 30;
+      updateAutoRefreshLabel();
+    }
+
+    async function manualRefresh() {
+      resetRefreshCountdown();
+      await loadClaimsData();
+    }
 
     // Fungsi Logout
     async function doLogout() {
@@ -285,16 +334,19 @@
 
     async function loadClaimsData() {
       const refreshIcon = document.getElementById('refreshIcon');
+      const refreshText = document.getElementById('refreshText');
+      const refreshStatus = document.getElementById('autoRefreshStatus');
+      const refreshLabel = document.getElementById('autoRefreshLabel');
       if (isLoadingClaimsData) return;
       isLoadingClaimsData = true;
       refreshIcon.classList.add('fa-spin');
+      refreshText.textContent = 'Memuat';
 
       try {
-        const resClaims = await fetch('/api/claims', { headers: getAuthHeader() });
-        const dataClaims = await resClaims.json();
-
-        const resStats = await fetch('/api/stats', { headers: getAuthHeader() });
-        const dataStats = await resStats.json();
+        const [resClaims, resStats] = await Promise.all([
+          fetch('/api/claims', { headers: getAuthHeader(), cache: 'no-store' }),
+          fetch('/api/stats', { headers: getAuthHeader(), cache: 'no-store' })
+        ]);
 
         if (resClaims.status === 401) {
           localStorage.removeItem('vancare_admin_token');
@@ -303,17 +355,30 @@
           return;
         }
 
+        const [dataClaims, dataStats] = await Promise.all([
+          resClaims.json(),
+          resStats.json()
+        ]);
+
         if (dataClaims.success) {
           allClaims = dataClaims.data || [];
           renderStats(dataStats.stats || {});
           renderTable();
+          resetRefreshCountdown();
+          refreshStatus.className = 'hidden lg:inline-flex items-center gap-1.5 text-[10px] text-emerald-400';
+          if (refreshLabel) refreshLabel.textContent = `Live - ${secondsUntilRefresh} dtk`;
         } else {
           console.error('Error load claims:', dataClaims.message);
+          refreshStatus.className = 'hidden lg:inline-flex items-center gap-1.5 text-[10px] text-rose-400';
+          if (refreshLabel) refreshLabel.textContent = 'Refresh gagal';
         }
       } catch (err) {
         console.error('Error load claims:', err);
+        refreshStatus.className = 'hidden lg:inline-flex items-center gap-1.5 text-[10px] text-rose-400';
+        if (refreshLabel) refreshLabel.textContent = 'Koneksi putus';
       } finally {
         isLoadingClaimsData = false;
+        refreshText.textContent = 'Refresh';
         setTimeout(() => refreshIcon.classList.remove('fa-spin'), 300);
       }
     }
