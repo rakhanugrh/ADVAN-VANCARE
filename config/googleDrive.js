@@ -1,8 +1,22 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const { Readable } = require('stream');
 const { google } = require('googleapis');
+
+const MAX_CLAIM_FILE_SIZE = 200 * 1024 * 1024;
+const ALLOWED_CLAIM_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/jpg',
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+  'video/webm',
+  'application/pdf'
+];
 
 /**
  * Inisialisasi Google Drive Client menggunakan OAuth2 (Akun Google Pribadi)
@@ -84,19 +98,6 @@ async function uploadFileToDrive(file) {
 
       const fileId = response.data.id;
 
-      // Berikan akses view publik per-file agar admin/teknisi bisa langsung membuka bukti foto/video
-      try {
-        await drive.permissions.create({
-          fileId: fileId,
-          requestBody: {
-            role: 'reader',
-            type: 'anyone'
-          }
-        });
-      } catch (permErr) {
-        console.warn('[Google Drive] Catatan: Permission reader publik:', permErr.message);
-      }
-
       console.log(`[Google Drive] Sukses upload: ${response.data.name} (ID: ${fileId})`);
 
       return {
@@ -148,11 +149,14 @@ async function uploadFileToDrive(file) {
 /**
  * Membuat Resumable Upload Session URL langsung ke Google Drive
  */
-async function createResumableSession({ fileName, mimeType, fileSize, origin }) {
+async function createResumableSession({ fileName, mimeType, fileSize, fileType, origin }) {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
   const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID;
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID &&
+    process.env.GOOGLE_DRIVE_FOLDER_ID !== 'your_google_drive_folder_id_here'
+    ? process.env.GOOGLE_DRIVE_FOLDER_ID
+    : null;
 
   if (!clientId || !clientSecret || !refreshToken) {
     throw new Error('Integrasi Google Drive belum dikonfigurasi. Lengkapi GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, dan GOOGLE_REFRESH_TOKEN.');
@@ -165,6 +169,7 @@ async function createResumableSession({ fileName, mimeType, fileSize, origin }) 
   );
   oauth2Client.setCredentials({ refresh_token: refreshToken });
 
+  const uploadToken = crypto.randomBytes(32).toString('hex');
   let token;
   try {
     ({ token } = await oauth2Client.getAccessToken());
@@ -180,6 +185,13 @@ async function createResumableSession({ fileName, mimeType, fileSize, origin }) 
   const metadata = {
     name: sanitizedName,
     description: 'Bukti Klaim Garansi VANCARE Advan',
+    appProperties: {
+      vancareUploadToken: uploadToken,
+      vancareUploadMimeType: mimeType,
+      vancareUploadSize: String(fileSize),
+      vancareUploadType: fileType,
+      vancareUploadCreatedAt: String(Date.now())
+    },
     ...(folderId ? { parents: [folderId] } : {})
   };
 
@@ -205,42 +217,131 @@ async function createResumableSession({ fileName, mimeType, fileSize, origin }) 
 
   return {
     uploadUrl: initRes.headers.get('location'),
-    fileName: sanitizedName
+    fileName: sanitizedName,
+    uploadToken
   };
 }
 
-/**
- * Mengatur permission file agar bisa dilihat admin/teknisi setelah upload selesai
- */
-async function finalizeResumableFile(fileId) {
+async function verifyResumableFile(fileId, uploadToken) {
+  if (typeof uploadToken !== 'string' || !/^[a-f0-9]{64}$/.test(uploadToken)) {
+    const error = new Error('Token sesi upload tidak valid.');
+    error.statusCode = 400;
+    throw error;
+  }
+
   const drive = getDriveClient();
   if (!drive) throw new Error('Drive client tidak aktif.');
 
-  await drive.permissions.create({
-    fileId,
-    requestBody: {
-      role: 'reader',
-      type: 'anyone'
-    }
-  });
-
   const fileMeta = await drive.files.get({
     fileId,
-    fields: 'id, name, webViewLink, webContentLink'
+    fields: 'id,name,mimeType,size,parents,appProperties,webViewLink,webContentLink'
   });
+  const file = fileMeta.data;
+
+  if (file.appProperties?.vancareUploadToken !== uploadToken) {
+    const error = new Error('File tidak terdaftar pada sesi upload ini.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const uploadCreatedAt = Number(file.appProperties?.vancareUploadCreatedAt);
+  if (!Number.isSafeInteger(uploadCreatedAt) ||
+      uploadCreatedAt > Date.now() + 60 * 1000 ||
+      Date.now() - uploadCreatedAt > 24 * 60 * 60 * 1000) {
+    const error = new Error('Sesi upload sudah kedaluwarsa.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID &&
+    process.env.GOOGLE_DRIVE_FOLDER_ID !== 'your_google_drive_folder_id_here'
+    ? process.env.GOOGLE_DRIVE_FOLDER_ID
+    : null;
+  if (folderId && !file.parents?.includes(folderId)) {
+    const error = new Error('File tidak berada di folder upload VANCARE.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  const fileSize = Number(file.size);
+  if (!ALLOWED_CLAIM_MIME_TYPES.includes(file.mimeType) ||
+      !Number.isSafeInteger(fileSize) ||
+      fileSize <= 0 ||
+      fileSize > MAX_CLAIM_FILE_SIZE ||
+      file.appProperties?.vancareUploadMimeType !== file.mimeType ||
+      Number(file.appProperties?.vancareUploadSize) !== fileSize ||
+      (file.appProperties?.vancareUploadType === 'photo' &&
+        !file.mimeType.startsWith('image/') &&
+        file.mimeType !== 'application/pdf') ||
+      (file.appProperties?.vancareUploadType === 'video' &&
+        !file.mimeType.startsWith('video/')) ||
+      !['photo', 'video'].includes(file.appProperties?.vancareUploadType)) {
+    const error = new Error('Metadata atau ukuran file tidak memenuhi ketentuan klaim.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return file;
+}
+
+/**
+ * Memastikan file hasil upload berasal dari sesi VANCARE yang diberikan.
+ */
+async function finalizeResumableFile(fileId, uploadToken) {
+  const file = await verifyResumableFile(fileId, uploadToken);
 
   return {
-    fileId: fileMeta.data.id,
-    fileName: fileMeta.data.name,
-    webViewLink: fileMeta.data.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
-    webContentLink: fileMeta.data.webContentLink || `https://drive.google.com/uc?id=${fileId}&export=download`,
+    fileId: file.id,
+    fileName: file.name,
+    webViewLink: file.webViewLink || `https://drive.google.com/file/d/${fileId}/view`,
+    webContentLink: file.webContentLink || `https://drive.google.com/uc?id=${fileId}&export=download`,
     isGoogleDrive: true
   };
+}
+
+async function downloadDriveFile(fileId) {
+  const drive = getDriveClient();
+  if (!drive) throw new Error('Drive client tidak aktif.');
+
+  const metadataResponse = await drive.files.get({
+    fileId,
+    fields: 'id,name,mimeType,size,parents'
+  });
+  const metadata = metadataResponse.data;
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID &&
+    process.env.GOOGLE_DRIVE_FOLDER_ID !== 'your_google_drive_folder_id_here'
+    ? process.env.GOOGLE_DRIVE_FOLDER_ID
+    : null;
+  if ((folderId && !metadata.parents?.includes(folderId)) ||
+      typeof metadata.name !== 'string' ||
+      !metadata.name.startsWith('VANCARE_')) {
+    const error = new Error('File tidak berada di folder upload VANCARE.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const fileSize = Number(metadata.size);
+  if (!ALLOWED_CLAIM_MIME_TYPES.includes(metadata.mimeType) ||
+      !Number.isSafeInteger(fileSize) ||
+      fileSize <= 0 ||
+      fileSize > MAX_CLAIM_FILE_SIZE) {
+    const error = new Error('Tipe atau ukuran file tidak didukung.');
+    error.statusCode = 415;
+    throw error;
+  }
+
+  const contentResponse = await drive.files.get(
+    { fileId, alt: 'media' },
+    { responseType: 'stream' }
+  );
+  return { metadata, stream: contentResponse.data };
 }
 
 module.exports = {
   uploadFileToDrive,
   getDriveClient,
   createResumableSession,
-  finalizeResumableFile
+  finalizeResumableFile,
+  verifyResumableFile,
+  downloadDriveFile
 };

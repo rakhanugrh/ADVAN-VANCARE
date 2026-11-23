@@ -11,9 +11,16 @@ const rateLimit = require('express-rate-limit');
 const {
   uploadFileToDrive,
   createResumableSession,
-  finalizeResumableFile
+  finalizeResumableFile,
+  verifyResumableFile,
+  downloadDriveFile
 } = require('./config/googleDrive');
-const { sendClaimReceivedEmail, sendClaimApprovalEmail, sendClaimRejectionEmail } = require('./config/mailer');
+const {
+  sendClaimReceivedEmail,
+  sendClaimApprovalEmail,
+  sendClaimRejectionEmail,
+  isValidEmailAddress
+} = require('./config/mailer');
 const {
   saveClaim,
   getAllClaims,
@@ -52,6 +59,16 @@ const claimLimiter = rateLimit({
     success: false,
     error: 'Batas pengiriman klaim tercapai. Silakan tunggu beberapa menit.',
     message: 'Batas pengiriman klaim tercapai. Silakan tunggu beberapa menit.'
+  }
+});
+const driveUploadLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: 'Batas permintaan upload tercapai. Silakan tunggu beberapa menit.'
   }
 });
 const MAX_CLAIM_FILE_SIZE = 200 * 1024 * 1024;
@@ -273,6 +290,13 @@ app.post('/api/claims', claimLimiter, upload.fields([
       });
     }
 
+    if (/[\r\n]/.test(customer_email) || !isValidEmailAddress(customer_email)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Format alamat email tidak valid.'
+      });
+    }
+
     const purchaseDateValue = purchase_date.trim();
     const dateParts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(purchaseDateValue);
     const parsedPurchaseDate = dateParts
@@ -302,8 +326,8 @@ app.post('/api/claims', claimLimiter, upload.fields([
     if (hasJsonFiles) {
       for (const file of submittedFiles) {
         if (!file || (file.type !== 'photo' && file.type !== 'video') ||
-            typeof file.fileId !== 'string' || !file.fileId.trim() ||
-            typeof file.fileName !== 'string' || !file.fileName.trim()) {
+            typeof file.fileId !== 'string' || !/^[a-zA-Z0-9_-]{10,256}$/.test(file.fileId) ||
+            typeof file.uploadToken !== 'string' || !/^[a-f0-9]{64}$/.test(file.uploadToken)) {
           return res.status(400).json({ success: false, message: 'Metadata file bukti tidak valid.' });
         }
 
@@ -312,11 +336,18 @@ app.post('/api/claims', claimLimiter, upload.fields([
         }
 
         const fileId = file.fileId.trim();
+        const verifiedFile = await verifyResumableFile(fileId, file.uploadToken);
+        const isPhoto = verifiedFile.mimeType.startsWith('image/') || verifiedFile.mimeType === 'application/pdf';
+        const isVideo = verifiedFile.mimeType.startsWith('video/');
+        if ((file.type === 'photo' && !isPhoto) || (file.type === 'video' && !isVideo)) {
+          return res.status(400).json({ success: false, message: 'Jenis file tidak sesuai dengan lampiran klaim.' });
+        }
+
         const canonicalViewLink = `https://drive.google.com/file/d/${encodeURIComponent(fileId)}/view`;
         const canonicalContentLink = `https://drive.google.com/uc?id=${encodeURIComponent(fileId)}&export=download`;
         const result = {
           fileId,
-          fileName: file.fileName.trim(),
+          fileName: verifiedFile.name,
           webViewLink: typeof file.webViewLink === 'string' && file.webViewLink.startsWith('https://drive.google.com/')
             ? file.webViewLink
             : canonicalViewLink,
@@ -330,8 +361,8 @@ app.post('/api/claims', claimLimiter, upload.fields([
           fileId: result.fileId,
           fileName: result.fileName,
           originalName: typeof file.originalName === 'string' ? file.originalName : result.fileName,
-          mimeType: typeof file.mimeType === 'string' ? file.mimeType : '',
-          size: Number.isSafeInteger(file.size) && file.size >= 0 ? file.size : null,
+          mimeType: verifiedFile.mimeType,
+          size: Number(verifiedFile.size),
           webViewLink: result.webViewLink,
           webContentLink: result.webContentLink,
           isGoogleDrive: true
@@ -437,9 +468,11 @@ app.post('/api/claims', claimLimiter, upload.fields([
     });
   } catch (error) {
     console.error('[Claim API] Error proses submit klaim:', error);
-    return res.status(500).json({
+    return res.status(error.statusCode || 500).json({
       success: false,
-      message: 'Terjadi kesalahan sistem saat memproses klaim: ' + error.message
+      message: error.statusCode
+        ? error.message
+        : 'Terjadi kesalahan sistem saat memproses klaim: ' + error.message
     });
   }
 });
@@ -667,16 +700,22 @@ app.post('/api/admin/import-csv', requireAdminAuth, csvUpload.single('file'), as
 });
 
 // Meminta sesi upload langsung ke Google Drive
-app.post('/api/drive/init-upload', async (req, res) => {
+app.post('/api/drive/init-upload', driveUploadLimiter, async (req, res) => {
   try {
-    const { fileName, mimeType, fileSize } = req.body;
-    if (typeof fileName !== 'string' || !fileName.trim() || typeof mimeType !== 'string' || !mimeType) {
+    const { fileName, mimeType, fileSize, fileType } = req.body || {};
+    if (typeof fileName !== 'string' || !fileName.trim() || fileName.trim().length > 255 ||
+        typeof mimeType !== 'string' || !mimeType ||
+        !['photo', 'video'].includes(fileType)) {
       return res.status(400).json({ success: false, message: 'Metadata file tidak lengkap.' });
     }
     if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_CLAIM_FILE_SIZE) {
       return res.status(400).json({ success: false, message: 'Ukuran file harus lebih dari 0 dan maksimal 200MB.' });
     }
-    if (!ALLOWED_CLAIM_MIME_TYPES.includes(mimeType)) {
+    const isPhotoMime = mimeType.startsWith('image/') || mimeType === 'application/pdf';
+    const isVideoMime = mimeType.startsWith('video/');
+    if (!ALLOWED_CLAIM_MIME_TYPES.includes(mimeType) ||
+        (fileType === 'photo' && !isPhotoMime) ||
+        (fileType === 'video' && !isVideoMime)) {
       return res.status(400).json({ success: false, message: 'Tipe file tidak didukung.' });
     }
 
@@ -684,6 +723,7 @@ app.post('/api/drive/init-upload', async (req, res) => {
       fileName,
       mimeType,
       fileSize,
+      fileType,
       origin: req.headers.origin
     });
 
@@ -694,19 +734,57 @@ app.post('/api/drive/init-upload', async (req, res) => {
   }
 });
 
-// Mengaktifkan akses baca publik setelah browser selesai mengunggah
-app.post('/api/drive/finalize-upload', async (req, res) => {
+// Memverifikasi file hasil upload dan mengembalikan metadata untuk klaim
+app.post('/api/drive/finalize-upload', driveUploadLimiter, async (req, res) => {
   try {
-    const { fileId } = req.body;
-    if (!fileId) {
-      return res.status(400).json({ success: false, message: 'fileId wajib diisi.' });
+    const { fileId, uploadToken } = req.body || {};
+    if (typeof fileId !== 'string' || !/^[a-zA-Z0-9_-]{10,256}$/.test(fileId) ||
+        typeof uploadToken !== 'string' || !/^[a-f0-9]{64}$/.test(uploadToken)) {
+      return res.status(400).json({ success: false, message: 'Identitas file atau sesi upload tidak valid.' });
     }
 
-    const result = await finalizeResumableFile(fileId);
+    const result = await finalizeResumableFile(fileId, uploadToken);
     return res.json({ success: true, file: result });
   } catch (err) {
     console.error('[Drive Finalize Error]:', err.message);
-    return res.status(500).json({ success: false, message: err.message });
+    return res.status(err.statusCode || 500).json({ success: false, message: err.message });
+  }
+});
+
+app.get('/api/admin/drive/:fileId', requireAdminAuth, async (req, res) => {
+  const { fileId } = req.params;
+  if (!/^[a-zA-Z0-9_-]{10,256}$/.test(fileId)) {
+    return res.status(400).json({ success: false, message: 'ID file tidak valid.' });
+  }
+
+  try {
+    const { metadata, stream } = await downloadDriveFile(fileId);
+    if (!ALLOWED_CLAIM_MIME_TYPES.includes(metadata.mimeType) ||
+        !Number.isSafeInteger(Number(metadata.size)) ||
+        Number(metadata.size) <= 0 ||
+        Number(metadata.size) > MAX_CLAIM_FILE_SIZE) {
+      return res.status(415).json({ success: false, message: 'Tipe atau ukuran file tidak didukung.' });
+    }
+
+    res.setHeader('Content-Type', metadata.mimeType);
+    res.setHeader('Content-Disposition', 'inline');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    stream.on('error', err => {
+      console.error('[Drive File Proxy Error]:', err.message);
+      if (!res.headersSent) {
+        res.status(502).json({ success: false, message: 'Gagal membaca file dari Google Drive.' });
+      } else {
+        res.destroy(err);
+      }
+    });
+    stream.pipe(res);
+  } catch (err) {
+    console.error('[Drive File Proxy Error]:', err.message);
+    return res.status(err.statusCode || (err.code === 404 ? 404 : 500)).json({
+      success: false,
+      message: err.statusCode ? err.message : 'Gagal membaca file dari Google Drive.'
+    });
   }
 });
 

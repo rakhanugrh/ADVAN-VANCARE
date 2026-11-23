@@ -9,6 +9,48 @@ const LOGO_ATTACHMENT = [
   }
 ];
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function isValidEmailAddress(value) {
+  if (typeof value !== 'string' || value.length > 254 || /[\r\n]/.test(value)) {
+    return false;
+  }
+
+  const email = value.trim();
+  const parts = email.split('@');
+  if (parts.length !== 2) return false;
+
+  const [localPart, domain] = parts;
+  if (localPart.length > 64 ||
+      !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/.test(localPart) ||
+      localPart.startsWith('.') ||
+      localPart.endsWith('.') ||
+      localPart.includes('..')) {
+    return false;
+  }
+
+  const labels = domain.split('.');
+  return domain.length <= 253 &&
+    labels.length >= 2 &&
+    labels[labels.length - 1].length >= 2 &&
+    labels.every(label =>
+      label.length >= 1 &&
+      label.length <= 63 &&
+      /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label)
+    );
+}
+
+function sanitizeHeaderValue(value) {
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
+}
+
 /**
  * Buat transporter Nodemailer untuk Gmail SMTP
  */
@@ -59,6 +101,17 @@ function formatDateIndo(dateStr) {
  * @param {Object} claim - Data klaim
  */
 async function sendClaimReceivedEmail(claim) {
+  if (!claim || !isValidEmailAddress(claim.customer_email)) {
+    return { success: false, error: 'Alamat email pelanggan tidak valid.' };
+  }
+
+  const customerEmail = claim.customer_email.trim().toLowerCase();
+  const customerName = escapeHtml(claim.customer_name);
+  const ticketNumber = escapeHtml(claim.ticket_number);
+  const productName = escapeHtml(claim.product_name);
+  const serialNumber = escapeHtml(claim.serial_number);
+  const purchaseDate = escapeHtml(claim.purchase_date || '-');
+  const issueDescription = escapeHtml(claim.issue_description).replace(/\r?\n/g, '<br>');
   const transporter = createTransporter();
   const fromName = process.env.EMAIL_FROM_NAME || 'VANCARE Advan Customer Care';
   const fromAddress = process.env.EMAIL_USER || 'no-reply@vancare.advan.id';
@@ -95,20 +148,20 @@ async function sendClaimReceivedEmail(claim) {
         </div>
         <h1 style="margin: 0 0 6px 0; font-size: 20px; font-weight: 700; color: #ffffff;">PENERIMAAN TIKET KLAIM GARANSI</h1>
         <p style="margin: 0; font-size: 13px; opacity: 0.9; color: #cbd5e1;">Pusat Layanan Garansi & Perbaikan Resmi</p>
-        <div class="badge-ticket">No. Tiket: ${claim.ticket_number}</div>
+        <div class="badge-ticket">No. Tiket: ${ticketNumber}</div>
       </div>
       <div class="content">
-        <p>Halo <strong>${claim.customer_name}</strong>,</p>
+        <p>Halo <strong>${customerName}</strong>,</p>
         <p>Terima kasih telah mengajukan klaim garansi produk Advan Anda. Permohonan klaim Anda telah berhasil kami terima dan saat ini sedang dalam proses review oleh tim teknisi spesialis VANCARE.</p>
         
         <div class="info-box">
           <strong>Detail Tiket Klaim Garansi:</strong>
           <table class="table-data">
-            <tr><td class="label">Nomor Tiket</td><td><strong>${claim.ticket_number}</strong></td></tr>
-            <tr><td class="label">Produk Advan</td><td>${claim.product_name}</td></tr>
-            <tr><td class="label">Nomor Seri (SN)</td><td><code>${claim.serial_number}</code></td></tr>
-            <tr><td class="label">Tanggal Beli</td><td>${claim.purchase_date || '-'}</td></tr>
-            <tr><td class="label">Kendala / Kerusakan</td><td>${claim.issue_description}</td></tr>
+            <tr><td class="label">Nomor Tiket</td><td><strong>${ticketNumber}</strong></td></tr>
+            <tr><td class="label">Produk Advan</td><td>${productName}</td></tr>
+            <tr><td class="label">Nomor Seri (SN)</td><td><code>${serialNumber}</code></td></tr>
+            <tr><td class="label">Tanggal Beli</td><td>${purchaseDate}</td></tr>
+            <tr><td class="label">Kendala / Kerusakan</td><td>${issueDescription}</td></tr>
             <tr><td class="label">Status Saat Ini</td><td><span style="color:#d97706; font-weight:bold;">PENDING (Dalam Pemeriksaan)</span></td></tr>
           </table>
         </div>
@@ -124,15 +177,15 @@ async function sendClaimReceivedEmail(claim) {
   `;
 
   if (!transporter) {
-    console.log(`[Mailer Mock] Email penerimaan klaim dikirim ke: ${claim.customer_email} (Tiket: ${claim.ticket_number})`);
+    console.log(`[Mailer Mock] Email penerimaan klaim dikirim ke: ${customerEmail} (Tiket: ${sanitizeHeaderValue(claim.ticket_number)})`);
     return { success: true, mocked: true };
   }
 
   try {
     const info = await transporter.sendMail({
       from: `"${fromName}" <${fromAddress}>`,
-      to: claim.customer_email,
-      subject: `[VANCARE ADVAN] Penerimaan Tiket Klaim Garansi #${claim.ticket_number} - ${claim.product_name}`,
+      to: customerEmail,
+      subject: `[VANCARE ADVAN] Penerimaan Tiket Klaim Garansi #${sanitizeHeaderValue(claim.ticket_number)} - ${sanitizeHeaderValue(claim.product_name)}`,
       html: htmlContent,
       attachments: LOGO_ATTACHMENT
     });
@@ -149,6 +202,17 @@ async function sendClaimReceivedEmail(claim) {
  * @param {Object} claim - Data klaim lengkap
  */
 async function sendClaimApprovalEmail(claim) {
+  if (!claim || !isValidEmailAddress(claim.customer_email)) {
+    return { success: false, error: 'Alamat email pelanggan tidak valid.' };
+  }
+
+  const customerEmail = claim.customer_email.trim().toLowerCase();
+  const customerName = escapeHtml(claim.customer_name);
+  const ticketNumber = escapeHtml(claim.ticket_number);
+  const productName = escapeHtml(claim.product_name);
+  const serialNumber = escapeHtml(claim.serial_number);
+  const approvedDate = escapeHtml(formatDateIndo(new Date()));
+  const issueDescription = escapeHtml(claim.issue_description).replace(/\r?\n/g, '<br>');
   const transporter = createTransporter();
   const fromName = process.env.EMAIL_FROM_NAME || 'VANCARE Advan Customer Care';
   const fromAddress = process.env.EMAIL_USER || 'no-reply@vancare.advan.id';
@@ -197,17 +261,17 @@ async function sendClaimApprovalEmail(claim) {
       
       <div class="content">
         <div class="greeting">
-          Yth. Bpk/Ibu <strong>${claim.customer_name}</strong>,
+          Yth. Bpk/Ibu <strong>${customerName}</strong>,
         </div>
         <p>Kabar baik! Permohonan klaim garansi untuk produk Advan Anda telah diverifikasi dan <strong>RESMI DISETUJUI</strong> oleh Tim Manajemen Garansi VANCARE.</p>
         
         <div class="card-ticket">
           <table>
-            <tr><td class="title">Nomor Tiket</td><td class="val"><span style="color:#047857; font-size:16px;">${claim.ticket_number}</span></td></tr>
-            <tr><td class="title">Nama Produk</td><td class="val">${claim.product_name}</td></tr>
-            <tr><td class="title">Serial Number (SN)</td><td class="val">${claim.serial_number}</td></tr>
-            <tr><td class="title">Tanggal Disetujui</td><td class="val">${formatDateIndo(new Date())}</td></tr>
-            <tr><td class="title">Kerusakan Dilaporkan</td><td class="val">${claim.issue_description}</td></tr>
+            <tr><td class="title">Nomor Tiket</td><td class="val"><span style="color:#047857; font-size:16px;">${ticketNumber}</span></td></tr>
+            <tr><td class="title">Nama Produk</td><td class="val">${productName}</td></tr>
+            <tr><td class="title">Serial Number (SN)</td><td class="val">${serialNumber}</td></tr>
+            <tr><td class="title">Tanggal Disetujui</td><td class="val">${approvedDate}</td></tr>
+            <tr><td class="title">Kerusakan Dilaporkan</td><td class="val">${issueDescription}</td></tr>
           </table>
         </div>
 
@@ -215,7 +279,7 @@ async function sendClaimApprovalEmail(claim) {
           <h3>Panduan Langkah Penanganan Unit:</h3>
           <div class="step-item">
             <span class="step-num">1.</span>
-            <div><strong>Cetak / Simpan Nomor Tiket:</strong> Tunjukkan email ini atau catat nomor tiket <strong>${claim.ticket_number}</strong> saat menyerahkan unit.</div>
+            <div><strong>Cetak / Simpan Nomor Tiket:</strong> Tunjukkan email ini atau catat nomor tiket <strong>${ticketNumber}</strong> saat menyerahkan unit.</div>
           </div>
           <div class="step-item">
             <span class="step-num">2.</span>
@@ -247,9 +311,9 @@ async function sendClaimApprovalEmail(claim) {
 
   if (!transporter) {
     console.log(`========================================================================`);
-    console.log(`[Mailer Mock] NOTIFIKASI APPROVAL DIKIRIM KE: ${claim.customer_email}`);
-    console.log(`Subjek: [KLAIM DISETUJUI] Tiket #${claim.ticket_number} - ${claim.product_name}`);
-    console.log(`Pelanggan: ${claim.customer_name} | SN: ${claim.serial_number}`);
+    console.log(`[Mailer Mock] NOTIFIKASI APPROVAL DIKIRIM KE: ${customerEmail}`);
+    console.log(`Subjek: [KLAIM DISETUJUI] Tiket #${sanitizeHeaderValue(claim.ticket_number)} - ${sanitizeHeaderValue(claim.product_name)}`);
+    console.log(`Pelanggan: ${sanitizeHeaderValue(claim.customer_name)} | SN: ${sanitizeHeaderValue(claim.serial_number)}`);
     console.log(`========================================================================`);
     return { success: true, mocked: true };
   }
@@ -257,12 +321,12 @@ async function sendClaimApprovalEmail(claim) {
   try {
     const info = await transporter.sendMail({
       from: `"${fromName}" <${fromAddress}>`,
-      to: claim.customer_email,
-      subject: `[KLAIM DISETUJUI] Permohonan Garansi VANCARE Advan #${claim.ticket_number}`,
+      to: customerEmail,
+      subject: `[KLAIM DISETUJUI] Permohonan Garansi VANCARE Advan #${sanitizeHeaderValue(claim.ticket_number)}`,
       html: htmlContent,
       attachments: LOGO_ATTACHMENT
     });
-    console.log(`[Mailer] Notifikasi Approval berhasil terkirim ke ${claim.customer_email}: ${info.messageId}`);
+    console.log(`[Mailer] Notifikasi Approval berhasil terkirim ke ${customerEmail}: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error(`[Mailer] Gagal mengirim email approval:`, err.message);
@@ -275,6 +339,18 @@ async function sendClaimApprovalEmail(claim) {
  * @param {Object} claim - Data klaim lengkap dengan rejected_reason
  */
 async function sendClaimRejectionEmail(claim) {
+  if (!claim || !isValidEmailAddress(claim.customer_email)) {
+    return { success: false, error: 'Alamat email pelanggan tidak valid.' };
+  }
+
+  const customerEmail = claim.customer_email.trim().toLowerCase();
+  const customerName = escapeHtml(claim.customer_name);
+  const ticketNumber = escapeHtml(claim.ticket_number);
+  const productName = escapeHtml(claim.product_name);
+  const serialNumber = escapeHtml(claim.serial_number);
+  const rejectedReason = escapeHtml(
+    claim.rejected_reason || 'Tidak memenuhi syarat & ketentuan masa garansi resmi Advan Indonesia.'
+  ).replace(/\r?\n/g, '<br>');
   const transporter = createTransporter();
   const fromName = process.env.EMAIL_FROM_NAME || 'VANCARE Advan Customer Care';
   const fromAddress = process.env.EMAIL_USER || 'no-reply@vancare.advan.id';
@@ -312,18 +388,18 @@ async function sendClaimRejectionEmail(claim) {
         <div class="badge-rejected">STATUS: DITOLAK (REJECTED)</div>
       </div>
       <div class="content">
-        <p>Yth. Bpk/Ibu <strong>${claim.customer_name}</strong>,</p>
-        <p>Terima kasih telah mengajukan klaim garansi untuk produk Advan Anda. Berdasarkan hasil verifikasi dokumen dan bukti yang diajukan oleh tim teknisi VANCARE, kami menyampaikan bahwa permohonan klaim tiket <strong>#${claim.ticket_number}</strong> saat ini <strong>belum dapat disetujui</strong>.</p>
+        <p>Yth. Bpk/Ibu <strong>${customerName}</strong>,</p>
+        <p>Terima kasih telah mengajukan klaim garansi untuk produk Advan Anda. Berdasarkan hasil verifikasi dokumen dan bukti yang diajukan oleh tim teknisi VANCARE, kami menyampaikan bahwa permohonan klaim tiket <strong>#${ticketNumber}</strong> saat ini <strong>belum dapat disetujui</strong>.</p>
         
         <div class="reason-box">
           <strong>Alasan Penolakan:</strong><br>
-          <p style="margin: 6px 0 0 0;">${claim.rejected_reason || 'Tidak memenuhi syarat & ketentuan masa garansi resmi Advan Indonesia.'}</p>
+          <p style="margin: 6px 0 0 0;">${rejectedReason}</p>
         </div>
 
         <table class="info-table">
-          <tr><td class="label">Nomor Tiket</td><td><strong>${claim.ticket_number}</strong></td></tr>
-          <tr><td class="label">Produk Advan</td><td>${claim.product_name}</td></tr>
-          <tr><td class="label">Serial Number (SN)</td><td><code>${claim.serial_number}</code></td></tr>
+          <tr><td class="label">Nomor Tiket</td><td><strong>${ticketNumber}</strong></td></tr>
+          <tr><td class="label">Produk Advan</td><td>${productName}</td></tr>
+          <tr><td class="label">Serial Number (SN)</td><td><code>${serialNumber}</code></td></tr>
         </table>
 
         <p style="margin-top: 20px;">
@@ -340,19 +416,19 @@ async function sendClaimRejectionEmail(claim) {
   `;
 
   if (!transporter) {
-    console.log(`[Mailer Mock] Email penolakan klaim #${claim.ticket_number} terkirim ke: ${claim.customer_email}`);
+    console.log(`[Mailer Mock] Email penolakan klaim #${sanitizeHeaderValue(claim.ticket_number)} terkirim ke: ${customerEmail}`);
     return { success: true, mocked: true };
   }
 
   try {
     const info = await transporter.sendMail({
       from: `"${fromName}" <${fromAddress}>`,
-      to: claim.customer_email,
-      subject: `[STATUS KLAIM] Pemberitahuan Klaim Garansi VANCARE Advan #${claim.ticket_number}`,
+      to: customerEmail,
+      subject: `[STATUS KLAIM] Pemberitahuan Klaim Garansi VANCARE Advan #${sanitizeHeaderValue(claim.ticket_number)}`,
       html: htmlContent,
       attachments: LOGO_ATTACHMENT
     });
-    console.log(`[Mailer] Notifikasi penolakan berhasil terkirim ke ${claim.customer_email}: ${info.messageId}`);
+    console.log(`[Mailer] Notifikasi penolakan berhasil terkirim ke ${customerEmail}: ${info.messageId}`);
     return { success: true, messageId: info.messageId };
   } catch (err) {
     console.error(`[Mailer] Gagal mengirim email penolakan:`, err.message);
@@ -363,5 +439,6 @@ async function sendClaimRejectionEmail(claim) {
 module.exports = {
   sendClaimReceivedEmail,
   sendClaimApprovalEmail,
-  sendClaimRejectionEmail
+  sendClaimRejectionEmail,
+  isValidEmailAddress
 };

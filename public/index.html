@@ -535,11 +535,14 @@
         body: JSON.stringify({
           fileName: file.name,
           mimeType: file.type || 'application/octet-stream',
-          fileSize: file.size
+          fileSize: file.size,
+          fileType: type
         })
       });
       const session = await readApiResponse(sessionResponse);
-      if (!session.uploadUrl) throw new Error('Google Drive tidak mengembalikan URL upload.');
+      if (!session.uploadUrl || !session.uploadToken) {
+        throw new Error('Google Drive tidak mengembalikan informasi sesi upload.');
+      }
 
       let driveFile = null;
       for (let start = 0; start < file.size; start += DRIVE_CHUNK_SIZE) {
@@ -568,12 +571,16 @@
       const finalizeResponse = await fetch('/api/drive/finalize-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId: driveFile.id })
+        body: JSON.stringify({
+          fileId: driveFile.id,
+          uploadToken: session.uploadToken
+        })
       });
       const finalized = await readApiResponse(finalizeResponse);
 
       return {
         ...finalized.file,
+        uploadToken: session.uploadToken,
         type,
         originalName: file.name,
         mimeType: file.type || 'application/octet-stream',

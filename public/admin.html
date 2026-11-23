@@ -237,6 +237,42 @@
     let autoRefreshIntervalId = null;
     let countdownIntervalId = null;
 
+    document.addEventListener('click', e => {
+      const driveFileButton = e.target.closest('[data-drive-file-id]');
+      if (driveFileButton) {
+        e.preventDefault();
+        openDriveFile(driveFileButton.dataset.driveFileId);
+        return;
+      }
+
+      const actionButton = e.target.closest('[data-claim-action]');
+      if (actionButton) {
+        e.preventDefault();
+        const { claimAction, claimId, ticketNumber } = actionButton.dataset;
+        if (claimAction === 'copy') {
+          copyToClipboard(ticketNumber);
+          return;
+        }
+
+        const claim = allClaims.find(c => String(c.id) === String(claimId));
+        if (!claim) return;
+
+        if (claimAction === 'approve') {
+          if (actionButton.closest('#detailModal')) closeDetailModal();
+          oneClickApprove(claim.id, claim.ticket_number, claim.customer_name);
+        } else if (claimAction === 'reject') {
+          if (actionButton.closest('#detailModal')) closeDetailModal();
+          rejectClaimModal(claim.id, claim.ticket_number, claim.customer_name);
+        } else if (claimAction === 'detail') {
+          showDetail(claim.id);
+        }
+        return;
+      }
+
+      const row = e.target.closest('#claimsTableBody tr[data-claim-id]');
+      if (row) handleRowClick(e, row.dataset.claimId);
+    });
+
     document.addEventListener('DOMContentLoaded', async () => {
       // --- AUTH GUARD ---
       const token = localStorage.getItem('vancare_admin_token');
@@ -330,6 +366,52 @@
 
     function getAuthHeader() {
       return { 'Authorization': 'Bearer ' + (localStorage.getItem('vancare_admin_token') || '') };
+    }
+
+    async function openDriveFile(fileId) {
+      const previewWindow = window.open('about:blank', '_blank');
+      if (!previewWindow) {
+        Swal.fire({ icon: 'error', title: 'Popup diblokir', text: 'Izinkan popup untuk membuka lampiran.' });
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/admin/drive/${encodeURIComponent(fileId)}`, {
+          headers: getAuthHeader(),
+          cache: 'no-store'
+        });
+        if (response.status === 401) {
+          previewWindow.close();
+          doLogout();
+          return;
+        }
+        if (!response.ok) {
+          throw new Error('Lampiran tidak dapat dibuka.');
+        }
+
+        const objectUrl = URL.createObjectURL(await response.blob());
+        previewWindow.location.replace(objectUrl);
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60 * 1000);
+      } catch (error) {
+        previewWindow.close();
+        Swal.fire({ icon: 'error', title: 'Gagal membuka lampiran', text: error.message });
+      }
+    }
+
+    function renderMediaFileLink(fileId, url, label, className, title, iconClass) {
+      if (typeof fileId === 'string' && fileId && !fileId.startsWith('local-')) {
+        return `<button type="button" data-drive-file-id="${escapeHtml(fileId)}" class="${className}" title="${title}">
+          <i class="${iconClass}"></i><span>${label}</span>
+        </button>`;
+      }
+
+      if (typeof url === 'string' &&
+          (url.startsWith('/uploads/') || url.startsWith('https://drive.google.com/'))) {
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" class="${className}" title="${title}">
+          <i class="${iconClass}"></i><span>${label}</span>
+        </a>`;
+      }
+      return '';
     }
 
     async function loadClaimsData() {
@@ -459,26 +541,24 @@
         }
 
         // Bukti Media Simpel (Foto & Video terpisah)
-        let mediaBtns = [];
-        if (c.photo_url || c.drive_file_url) {
-          const pUrl = c.photo_url || c.drive_file_url;
-          mediaBtns.push(`
-            <a href="${pUrl}" target="_blank"
-              class="inline-flex items-center gap-1 text-slate-700 hover:text-brand-pink bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded text-[11px] transition" title="Lihat Foto / Nota">
-              <i class="fa-regular fa-image text-brand-pink"></i>
-              <span>Foto</span>
-            </a>
-          `);
-        }
-        if (c.video_url) {
-          mediaBtns.push(`
-            <a href="${c.video_url}" target="_blank"
-              class="inline-flex items-center gap-1 text-slate-700 hover:text-purple-600 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded text-[11px] transition" title="Lihat Rekaman Video">
-              <i class="fa-solid fa-film text-purple-600"></i>
-              <span>Video</span>
-            </a>
-          `);
-        }
+        const mediaBtns = [
+          renderMediaFileLink(
+            c.photo_file_id || c.drive_file_id,
+            c.photo_url || c.drive_file_url,
+            'Foto',
+            'inline-flex items-center gap-1 text-slate-700 hover:text-brand-pink bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded text-[11px] transition',
+            'Lihat Foto / Nota',
+            'fa-regular fa-image text-brand-pink'
+          ),
+          renderMediaFileLink(
+            c.video_file_id,
+            c.video_url,
+            'Video',
+            'inline-flex items-center gap-1 text-slate-700 hover:text-purple-600 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded text-[11px] transition',
+            'Lihat Rekaman Video',
+            'fa-solid fa-film text-purple-600'
+          )
+        ].filter(Boolean);
         const mediaBtn = mediaBtns.length > 0 
           ? `<div class="flex items-center justify-center gap-1">${mediaBtns.join('')}</div>`
           : '<span class="text-slate-400 text-[11px]">-</span>';
@@ -488,14 +568,14 @@
         }) : '-';
 
         return `
-          <tr onclick="handleRowClick(event, '${c.id}')"
+          <tr data-claim-id="${escapeHtml(c.id)}"
             class="hover:bg-pink-50/20 cursor-pointer transition border-b border-slate-100 group"
-            title="Klik baris untuk melihat detail rincian klaim #${c.ticket_number}">
+            title="Klik baris untuk melihat detail rincian klaim #${escapeHtml(c.ticket_number)}">
             <!-- No Tiket -->
             <td class="py-3 px-4">
               <div class="flex items-center gap-1 font-semibold text-slate-900 group-hover:text-brand-pink transition-colors">
-                <span>${c.ticket_number}</span>
-                <button onclick="event.stopPropagation(); copyToClipboard('${c.ticket_number}')" title="Salin" class="text-slate-400 hover:text-slate-600 p-0.5">
+                <span>${escapeHtml(c.ticket_number)}</span>
+                <button data-claim-action="copy" data-ticket-number="${escapeHtml(c.ticket_number)}" title="Salin" class="text-slate-400 hover:text-slate-600 p-0.5">
                   <i class="fa-regular fa-copy text-[11px]"></i>
                 </button>
               </div>
@@ -539,15 +619,15 @@
             <td class="py-3 px-4 text-center">
               <div class="flex items-center justify-center gap-1.5">
                 ${isPending ? `
-                  <button onclick="event.stopPropagation(); oneClickApprove('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
-                    id="approveBtn_${c.id}"
+                  <button data-claim-action="approve" data-claim-id="${escapeHtml(c.id)}"
+                    id="approveBtn_${escapeHtml(c.id)}"
                     class="bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1 shadow-xs">
                     <i class="fa-solid fa-check text-[10px]"></i>
                     <span>Approve</span>
                   </button>
 
-                  <button onclick="event.stopPropagation(); rejectClaimModal('${c.id}', '${c.ticket_number}', '${escapeHtml(c.customer_name)}')"
-                    id="rejectBtn_${c.id}"
+                  <button data-claim-action="reject" data-claim-id="${escapeHtml(c.id)}"
+                    id="rejectBtn_${escapeHtml(c.id)}"
                     class="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-semibold px-2.5 py-1 rounded text-[11px] transition inline-flex items-center gap-1"
                     title="Tolak Pengajuan Klaim">
                     <i class="fa-solid fa-xmark text-[10px]"></i>
@@ -563,7 +643,7 @@
                   </span>
                 `}
 
-                <button onclick="event.stopPropagation(); showDetail('${c.id}')" class="text-slate-500 hover:text-slate-800 px-2 py-1 rounded hover:bg-slate-100 transition text-[11px]">
+                <button data-claim-action="detail" data-claim-id="${escapeHtml(c.id)}" class="text-slate-500 hover:text-slate-800 px-2 py-1 rounded hover:bg-slate-100 transition text-[11px]">
                   Detail
                 </button>
               </div>
@@ -579,7 +659,7 @@
     async function rejectClaimModal(claimId, ticketNo, customerName) {
       const { value: reason } = await Swal.fire({
         title: 'Tolak Pengajuan Klaim?',
-        html: `Anda akan menolak klaim untuk tiket <strong class="text-brand-pink">${ticketNo}</strong> (${escapeHtml(customerName)}).<br><span class="text-xs text-slate-500">Pelanggan akan menerima email pemberitahuan resmi beserta alasan penolakan.</span>`,
+        html: `Anda akan menolak klaim untuk tiket <strong class="text-brand-pink">${escapeHtml(ticketNo)}</strong> (${escapeHtml(customerName)}).<br><span class="text-xs text-slate-500">Pelanggan akan menerima email pemberitahuan resmi beserta alasan penolakan.</span>`,
         input: 'textarea',
         inputLabel: 'Alasan Penolakan Klaim (Wajib):',
         inputPlaceholder: 'Contoh: Masa garansi unit telah berakhir, segel garansi rusak, atau kerusakan akibat kelalaian pemakaian (cairan/jatuh)...',
@@ -724,7 +804,7 @@
         <div class="grid grid-cols-2 gap-3 bg-slate-50 p-3.5 rounded-lg border border-slate-200">
           <div>
             <span class="text-slate-400 block text-[10px]">Nomor Tiket</span>
-            <span class="font-bold text-slate-900">${claim.ticket_number}</span>
+            <span class="font-bold text-slate-900">${escapeHtml(claim.ticket_number)}</span>
           </div>
           <div>
             <span class="text-slate-400 block text-[10px]">Status</span>
@@ -736,7 +816,7 @@
           </div>
           <div>
             <span class="text-slate-400 block text-[10px]">WhatsApp / Telepon</span>
-            <span class="font-medium text-slate-800">${claim.customer_phone}</span>
+            <span class="font-medium text-slate-800">${escapeHtml(claim.customer_phone)}</span>
           </div>
           <div class="col-span-2">
             <span class="text-slate-400 block text-[10px]">Email</span>
@@ -764,7 +844,7 @@
             </div>
             <div>
               <span class="text-slate-400 block text-[10px]">Tanggal Beli</span>
-              <span class="text-slate-700">${claim.purchase_date || '-'}</span>
+              <span class="text-slate-700">${escapeHtml(claim.purchase_date || '-')}</span>
             </div>
             <div>
               <span class="text-slate-400 block text-[10px]">Waktu Pengajuan</span>
@@ -780,11 +860,11 @@
           </div>
         </div>
 
-        ${(claim.photo_url || claim.drive_file_url || claim.video_url) ? `
+        ${(claim.photo_url || claim.drive_file_url || claim.video_url || claim.photo_file_id || claim.video_file_id || claim.drive_file_id) ? `
           <div class="border border-slate-200 rounded-lg p-3 space-y-2 bg-slate-50">
             <span class="text-slate-500 font-semibold text-[10px] uppercase block">Lampiran Bukti Media</span>
             
-            ${(claim.photo_url || claim.drive_file_url) ? `
+            ${(claim.photo_url || claim.drive_file_url || claim.photo_file_id || claim.drive_file_id) ? `
               <div class="flex items-center justify-between border-b border-slate-200 pb-2">
                 <div class="flex items-center gap-2">
                   <i class="fa-regular fa-image text-brand-pink text-base"></i>
@@ -793,15 +873,18 @@
                     <div class="text-[10px] text-slate-400">Foto bukti kondisi unit / nota pembelian</div>
                   </div>
                 </div>
-                <a href="${claim.photo_url || claim.drive_file_url}" target="_blank"
-                  class="bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1 rounded text-[11px] font-medium transition inline-flex items-center gap-1">
-                  <span>Buka Foto</span>
-                  <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
-                </a>
+                ${renderMediaFileLink(
+                  claim.photo_file_id || claim.drive_file_id,
+                  claim.photo_url || claim.drive_file_url,
+                  'Buka Foto',
+                  'bg-slate-800 hover:bg-slate-900 text-white px-2.5 py-1 rounded text-[11px] font-medium transition inline-flex items-center gap-1',
+                  'Buka Foto',
+                  'fa-solid fa-arrow-up-right-from-square text-[9px]'
+                )}
               </div>
             ` : ''}
 
-            ${claim.video_url ? `
+            ${(claim.video_url || claim.video_file_id) ? `
               <div class="flex items-center justify-between pt-1">
                 <div class="flex items-center gap-2">
                   <i class="fa-solid fa-film text-purple-600 text-base"></i>
@@ -810,11 +893,14 @@
                     <div class="text-[10px] text-slate-400">Video dokumentasi kendala perangkat</div>
                   </div>
                 </div>
-                <a href="${claim.video_url}" target="_blank"
-                  class="bg-purple-700 hover:bg-purple-800 text-white px-2.5 py-1 rounded text-[11px] font-medium transition inline-flex items-center gap-1">
-                  <span>Putar Video</span>
-                  <i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i>
-                </a>
+                ${renderMediaFileLink(
+                  claim.video_file_id,
+                  claim.video_url,
+                  'Putar Video',
+                  'bg-purple-700 hover:bg-purple-800 text-white px-2.5 py-1 rounded text-[11px] font-medium transition inline-flex items-center gap-1',
+                  'Putar Video',
+                  'fa-solid fa-arrow-up-right-from-square text-[9px]'
+                )}
               </div>
             ` : ''}
           </div>
@@ -829,12 +915,12 @@
 
         ${claim.status === 'PENDING' ? `
           <div class="pt-2 flex items-center gap-2">
-            <button onclick="closeDetailModal(); oneClickApprove('${claim.id}', '${claim.ticket_number}', '${escapeHtml(claim.customer_name)}')"
+            <button data-claim-action="approve" data-claim-id="${escapeHtml(claim.id)}"
               class="flex-1 bg-brand-pink hover:bg-brand-pink-hover text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-1.5 shadow-sm">
               <i class="fa-solid fa-check"></i>
               <span>Approve Klaim Ini</span>
             </button>
-            <button onclick="closeDetailModal(); rejectClaimModal('${claim.id}', '${claim.ticket_number}', '${escapeHtml(claim.customer_name)}')"
+            <button data-claim-action="reject" data-claim-id="${escapeHtml(claim.id)}"
               class="bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-1.5">
               <i class="fa-solid fa-xmark"></i>
               <span>Tolak Klaim</span>
@@ -863,7 +949,7 @@
     }
 
     function escapeHtml(str) {
-      if (!str) return '';
+      if (str === null || str === undefined) return '';
       return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
