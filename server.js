@@ -181,6 +181,69 @@ function requireAdminAuth(req, res, next) {
   next();
 }
 
+async function verifyTurnstileToken(token, clientIp) {
+  const secretKey = process.env.TURNSTILE_SECRET_KEY;
+  if (!secretKey) {
+    const error = new Error('Verifikasi Turnstile belum dikonfigurasi pada server.');
+    error.statusCode = 503;
+    throw error;
+  }
+  if (typeof token !== 'string' || token.length === 0 || token.length > 2048) {
+    return false;
+  }
+
+  const body = new URLSearchParams({
+    secret: secretKey,
+    response: token
+  });
+  if (typeof clientIp === 'string' && clientIp) {
+    body.set('remoteip', clientIp);
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  let response;
+  try {
+    response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+      signal: controller.signal
+    });
+  } catch (cause) {
+    const error = new Error('Layanan verifikasi Turnstile tidak dapat dijangkau.');
+    error.statusCode = 502;
+    error.cause = cause;
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  if (!response.ok) {
+    const error = new Error('Layanan verifikasi Turnstile mengembalikan respons gagal.');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  let result;
+  try {
+    result = await response.json();
+  } catch (cause) {
+    const error = new Error('Respons verifikasi Turnstile tidak valid.');
+    error.statusCode = 502;
+    error.cause = cause;
+    throw error;
+  }
+
+  if (!result || typeof result.success !== 'boolean') {
+    const error = new Error('Respons verifikasi Turnstile tidak valid.');
+    error.statusCode = 502;
+    throw error;
+  }
+
+  return result.success === true;
+}
+
 // ===============================================
 // ROUTE HALAMAN UTAMA & ADMIN
 // ===============================================
@@ -200,9 +263,13 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// API: Login Admin (mendukung /api/auth/login & /api/admin/login dengan rate limiting)
-app.post(['/api/auth/login', '/api/admin/login'], loginLimiter, (req, res) => {
-  const { username, password } = req.body || {};
+app.get('/api/config', (req, res) => {
+  res.json({ turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || '' });
+});
+
+// API: Login Admin (mendukung rute lama dan /api/login, dengan rate limiting)
+app.post(['/api/login', '/api/auth/login', '/api/admin/login'], loginLimiter, async (req, res) => {
+  const { username, password, captchaToken } = req.body || {};
   const validUser = process.env.ADMIN_USERNAME;
   const validPass = process.env.ADMIN_PASSWORD;
 
@@ -211,6 +278,16 @@ app.post(['/api/auth/login', '/api/admin/login'], loginLimiter, (req, res) => {
       success: false,
       message: 'Login admin belum dikonfigurasi pada server.'
     });
+  }
+
+  try {
+    const captchaValid = await verifyTurnstileToken(captchaToken, req.ip);
+    if (!captchaValid) {
+      return res.status(403).json({ success: false, message: 'Verifikasi CAPTCHA gagal. Silakan coba lagi.' });
+    }
+  } catch (err) {
+    console.error('[Auth] Error verifikasi Turnstile:', err.message);
+    return res.status(err.statusCode || 502).json({ success: false, message: err.message });
   }
 
   if (username === validUser && password === validPass) {
@@ -264,7 +341,8 @@ app.post('/api/claims', claimLimiter, upload.fields([
       product_name,
       serial_number,
       purchase_date,
-      issue_description
+      issue_description,
+      captchaToken
     } = req.body;
 
     // Validasi field wajib
@@ -295,6 +373,11 @@ app.post('/api/claims', claimLimiter, upload.fields([
         success: false,
         message: 'Format alamat email tidak valid.'
       });
+    }
+
+    const captchaValid = await verifyTurnstileToken(captchaToken, req.ip);
+    if (!captchaValid) {
+      return res.status(403).json({ success: false, message: 'Verifikasi CAPTCHA gagal. Silakan coba lagi.' });
     }
 
     const purchaseDateValue = purchase_date.trim();

@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <title>VANCARE Advan - Layanan Klaim Garansi Resmi</title>
   <!-- Favicon -->
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
@@ -335,6 +336,7 @@
         </div>
 
         <!-- TOMBOL KIRIM (PINK KHAS ADVAN) -->
+        <div id="turnstile-widget" class="my-3"></div>
         <div>
           <button type="submit" id="submitBtn"
             class="w-full bg-advan-pink hover:bg-advan-pink-hover text-white font-bold py-3.5 px-6 rounded-xl shadow-lg shadow-pink-500/20 transition flex items-center justify-center gap-2 text-sm tracking-wide">
@@ -363,6 +365,30 @@
 
   <!-- JAVASCRIPT FRONTEND (KATEGORI PRODUK & UPLOAD 200MB) -->
   <script>
+    let vancareTurnstileId = null;
+    let vancareTurnstileToken = '';
+
+    function mountVancareTurnstile() {
+      fetch('/api/config')
+        .then((r) => r.json())
+        .then((cfg) => {
+          if (!cfg.turnstileSiteKey || !window.turnstile) {
+            setTimeout(mountVancareTurnstile, 250);
+            return;
+          }
+          if (vancareTurnstileId !== null) return;
+          vancareTurnstileId = window.turnstile.render('#turnstile-widget', {
+            sitekey: cfg.turnstileSiteKey,
+            callback: (token) => { vancareTurnstileToken = token; },
+            'expired-callback': () => { vancareTurnstileToken = ''; },
+            'error-callback': () => { vancareTurnstileToken = ''; }
+          });
+        })
+        .catch((err) => console.error('Error load config Turnstile:', err));
+    }
+
+    window.addEventListener('DOMContentLoaded', mountVancareTurnstile);
+
     const form = document.getElementById('claimForm');
     const submitBtn = document.getElementById('submitBtn');
     const purchaseDateInput = document.getElementById('purchase_date');
@@ -762,6 +788,7 @@
             serial_number: document.getElementById('serial_number').value,
             purchase_date: purchaseDateInput.value,
             issue_description: document.getElementById('issue_description').value,
+            captchaToken: vancareTurnstileToken,
             files: uploadedFiles
           })
         });
@@ -817,6 +844,10 @@
           confirmButtonColor: '#e6007e'
         });
       } finally {
+        if (window.turnstile && vancareTurnstileId !== null) {
+          window.turnstile.reset(vancareTurnstileId);
+          vancareTurnstileToken = '';
+        }
         submitBtn.disabled = false;
         submitBtn.innerHTML = `
           <i class="fa-solid fa-paper-plane text-xs"></i>
