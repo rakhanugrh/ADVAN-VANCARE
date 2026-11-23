@@ -11,11 +11,12 @@ const ALLOWED_CLAIM_MIME_TYPES = [
   'image/png',
   'image/webp',
   'image/jpg',
+  'image/heic',
+  'image/heif',
   'video/mp4',
   'video/quicktime',
   'video/x-msvideo',
-  'video/webm',
-  'application/pdf'
+  'video/webm'
 ];
 
 /**
@@ -271,8 +272,7 @@ async function verifyResumableFile(fileId, uploadToken) {
       file.appProperties?.vancareUploadMimeType !== file.mimeType ||
       Number(file.appProperties?.vancareUploadSize) !== fileSize ||
       (file.appProperties?.vancareUploadType === 'photo' &&
-        !file.mimeType.startsWith('image/') &&
-        file.mimeType !== 'application/pdf') ||
+        !file.mimeType.startsWith('image/')) ||
       (file.appProperties?.vancareUploadType === 'video' &&
         !file.mimeType.startsWith('video/')) ||
       !['photo', 'video'].includes(file.appProperties?.vancareUploadType)) {

@@ -77,11 +77,12 @@ const ALLOWED_CLAIM_MIME_TYPES = [
   'image/png',
   'image/webp',
   'image/jpg',
+  'image/heic',
+  'image/heif',
   'video/mp4',
   'video/quicktime',
   'video/x-msvideo',
-  'video/webm',
-  'application/pdf'
+  'video/webm'
 ];
 
 // Middleware
@@ -104,7 +105,7 @@ const upload = multer({
     if (ALLOWED_CLAIM_MIME_TYPES.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error('Tipe file tidak didukung. Harap upload foto (JPG/PNG), video (MP4/MOV), atau dokumen PDF.'), false);
+      cb(new Error('Tipe file tidak didukung. Harap upload foto (JPG/PNG/WEBP) atau video (MP4/MOV/AVI/WEBM).'), false);
     }
   }
 });
@@ -327,7 +328,7 @@ app.post('/api/auth/logout', (req, res) => {
  * upload ke Google Drive, simpan ke database, dan kirim email tanda terima.
  */
 app.post('/api/claims', claimLimiter, upload.fields([
-  { name: 'proof_photo', maxCount: 1 },
+  { name: 'proof_photo', maxCount: 5 },
   { name: 'proof_video', maxCount: 1 },
   { name: 'proof_file', maxCount: 1 }
 ]), async (req, res) => {
@@ -407,6 +408,10 @@ app.post('/api/claims', claimLimiter, upload.fields([
     const uploadedFiles = [];
 
     if (hasJsonFiles) {
+      if (submittedFiles.length > 6) {
+        return res.status(400).json({ success: false, message: 'Maksimal 5 foto dan 1 video yang dapat dilampirkan.' });
+      }
+      let photoCount = 0;
       for (const file of submittedFiles) {
         if (!file || (file.type !== 'photo' && file.type !== 'video') ||
             typeof file.fileId !== 'string' || !/^[a-zA-Z0-9_-]{10,256}$/.test(file.fileId) ||
@@ -414,13 +419,19 @@ app.post('/api/claims', claimLimiter, upload.fields([
           return res.status(400).json({ success: false, message: 'Metadata file bukti tidak valid.' });
         }
 
-        if ((file.type === 'photo' && photoResult.fileId) || (file.type === 'video' && videoResult.fileId)) {
-          return res.status(400).json({ success: false, message: 'Hanya satu file foto dan satu file video yang dapat dilampirkan.' });
+        if (file.type === 'photo') {
+          photoCount++;
+          if (photoCount > 5) {
+            return res.status(400).json({ success: false, message: 'Maksimal 5 foto yang dapat dilampirkan.' });
+          }
+        }
+        if (file.type === 'video' && videoResult.fileId) {
+          return res.status(400).json({ success: false, message: 'Hanya satu file video yang dapat dilampirkan.' });
         }
 
         const fileId = file.fileId.trim();
         const verifiedFile = await verifyResumableFile(fileId, file.uploadToken);
-        const isPhoto = verifiedFile.mimeType.startsWith('image/') || verifiedFile.mimeType === 'application/pdf';
+        const isPhoto = verifiedFile.mimeType.startsWith('image/');
         const isVideo = verifiedFile.mimeType.startsWith('video/');
         if ((file.type === 'photo' && !isPhoto) || (file.type === 'video' && !isVideo)) {
           return res.status(400).json({ success: false, message: 'Jenis file tidak sesuai dengan lampiran klaim.' });
@@ -452,28 +463,38 @@ app.post('/api/claims', claimLimiter, upload.fields([
         };
 
         uploadedFiles.push(metadata);
-        if (file.type === 'photo') photoResult = result;
-        else videoResult = result;
+        if (file.type === 'photo') {
+          if (!photoResult.fileId) photoResult = result;
+        } else {
+          videoResult = result;
+        }
       }
     } else {
-      const photoFile = (req.files && req.files.proof_photo && req.files.proof_photo[0]) ||
-                        (req.files && req.files.proof_file && req.files.proof_file[0]) ||
-                        req.file;
       const videoFile = req.files && req.files.proof_video && req.files.proof_video[0];
 
-      if (photoFile) {
+      let photoFiles = req.files && req.files.proof_photo ? req.files.proof_photo : [];
+      if (photoFiles.length === 0 && req.files && req.files.proof_file) {
+        photoFiles = req.files.proof_file.slice(0, 5);
+      } else if (photoFiles.length === 0 && req.file) {
+        photoFiles = [req.file];
+      }
+      if (photoFiles.length > 5) {
+        return res.status(400).json({ success: false, message: 'Maksimal 5 foto yang dapat dilampirkan.' });
+      }
+      for (const photoFile of photoFiles) {
         console.log(`[Claim API] Upload Foto: ${photoFile.originalname} (${photoFile.size} bytes)`);
-        photoResult = await uploadFileToDrive(photoFile);
+        const uploadedPhoto = await uploadFileToDrive(photoFile);
+        if (!photoResult.fileId) photoResult = uploadedPhoto;
         uploadedFiles.push({
           type: 'photo',
-          fileId: photoResult.fileId,
-          fileName: photoResult.fileName,
+          fileId: uploadedPhoto.fileId,
+          fileName: uploadedPhoto.fileName,
           originalName: photoFile.originalname,
           mimeType: photoFile.mimetype,
           size: photoFile.size,
-          webViewLink: photoResult.webViewLink,
-          webContentLink: photoResult.webContentLink,
-          isGoogleDrive: !!photoResult.isGoogleDrive
+          webViewLink: uploadedPhoto.webViewLink,
+          webContentLink: uploadedPhoto.webContentLink,
+          isGoogleDrive: !!uploadedPhoto.isGoogleDrive
         });
       }
 
@@ -794,7 +815,7 @@ app.post('/api/drive/init-upload', driveUploadLimiter, async (req, res) => {
     if (!Number.isSafeInteger(fileSize) || fileSize <= 0 || fileSize > MAX_CLAIM_FILE_SIZE) {
       return res.status(400).json({ success: false, message: 'Ukuran file harus lebih dari 0 dan maksimal 200MB.' });
     }
-    const isPhotoMime = mimeType.startsWith('image/') || mimeType === 'application/pdf';
+    const isPhotoMime = mimeType.startsWith('image/');
     const isVideoMime = mimeType.startsWith('video/');
     if (!ALLOWED_CLAIM_MIME_TYPES.includes(mimeType) ||
         (fileType === 'photo' && !isPhotoMime) ||
