@@ -29,6 +29,12 @@ const {
   rejectClaim,
   getStats
 } = require('./config/supabase');
+const {
+  publicKey: vapidPublicKey,
+  saveSubscription,
+  removeSubscription,
+  sendPushNotification
+} = require('./config/push');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -280,7 +286,10 @@ app.get('/admin', (req, res) => {
 });
 
 app.get('/api/config', (req, res) => {
-  res.json({ turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || '' });
+  res.json({
+    turnstileSiteKey: process.env.TURNSTILE_SITE_KEY || '',
+    vapidPublicKey: vapidPublicKey || ''
+  });
 });
 
 // API: Login Admin (mendukung rute lama dan /api/login, dengan rate limiting)
@@ -330,6 +339,35 @@ app.get('/api/auth/verify', (req, res) => {
 // API: Logout Admin
 app.post('/api/auth/logout', (req, res) => {
   return res.json({ success: true });
+});
+
+// API: Web Push Subscription
+app.post('/api/push/subscribe', requireAdminAuth, (req, res) => {
+  try {
+    const count = saveSubscription(req.body);
+    return res.json({ success: true, subscriptions: count });
+  } catch (error) {
+    return res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+app.post('/api/push/unsubscribe', requireAdminAuth, (req, res) => {
+  const count = removeSubscription(req.body?.subscription || req.body);
+  return res.json({ success: true, subscriptions: count });
+});
+
+app.post('/api/push/test', requireAdminAuth, async (req, res) => {
+  try {
+    const result = await sendPushNotification({
+      title: 'VANCARE - Notifikasi Aktif',
+      body: 'Web Push Windows berhasil diaktifkan.',
+      url: '/admin',
+      tag: 'vancare-test'
+    });
+    return res.json({ success: true, ...result });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
 });
 
 // ===============================================
@@ -572,6 +610,17 @@ app.post('/api/claims', claimLimiter, upload.fields([
     const savedClaim = await saveClaim(newClaimData);
     console.log(`[Claim API] Klaim berhasil disimpan dengan nomor tiket: ${ticketNumber}`);
 
+    try {
+      await sendPushNotification({
+        title: 'Klaim Garansi Baru',
+        body: `Tiket ${ticketNumber} dari ${savedClaim.customer_name || customer_name.trim()} perlu diperiksa.`,
+        url: '/admin',
+        tag: `claim-${ticketNumber}`
+      });
+    } catch (pushError) {
+      console.error('[Claim API] Gagal mengirim Web Push:', pushError.message);
+    }
+
     // 4. Kirim notifikasi email tanda terima otomatis ke pelanggan (WAJIB di-await agar tidak dihentikan serverless Vercel)
     try {
       await sendClaimReceivedEmail(savedClaim);
@@ -681,6 +730,17 @@ app.post('/api/claims/:id/approve', requireAdminAuth, async (req, res) => {
     // Kirim email konfirmasi approval ke pelanggan via Nodemailer
     const emailResult = await sendClaimApprovalEmail(updatedClaim);
 
+    try {
+      await sendPushNotification({
+        title: 'Klaim Disetujui',
+        body: `Tiket ${updatedClaim.ticket_number} telah disetujui.`,
+        url: '/admin',
+        tag: `claim-approved-${updatedClaim.ticket_number}`
+      });
+    } catch (pushError) {
+      console.error('[Admin API] Gagal mengirim Web Push approval:', pushError.message);
+    }
+
     return res.json({
       success: true,
       message: `Klaim #${updatedClaim.ticket_number} berhasil disetujui! Email instruksi penanganan telah dikirim ke ${updatedClaim.customer_email}.`,
@@ -721,6 +781,17 @@ app.post('/api/claims/:id/reject', requireAdminAuth, async (req, res) => {
       await sendClaimRejectionEmail(updatedClaim);
     } catch (mailErr) {
       console.error('[Admin API] Background rejection email error:', mailErr.message);
+    }
+
+    try {
+      await sendPushNotification({
+        title: 'Klaim Ditolak',
+        body: `Tiket ${updatedClaim.ticket_number} telah ditolak.`,
+        url: '/admin',
+        tag: `claim-rejected-${updatedClaim.ticket_number}`
+      });
+    } catch (pushError) {
+      console.error('[Admin API] Gagal mengirim Web Push penolakan:', pushError.message);
     }
 
     return res.json({
