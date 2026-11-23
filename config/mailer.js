@@ -294,7 +294,7 @@ async function sendClaimApprovalEmail(claim) {
         <div class="service-center">
           <strong>Pusat Layanan Utama VANCARE Advan:</strong><br>
           Gedung VANCARE Service Center Advan Indonesia<br>
-          Jl. Hayam Wuruk No. 127, Gambir, Jakarta Pusat 10180<br>
+          Blok 23A, Jl. Kw. Industri Candi Tahap V Jl. Gatot Subroto, Ngaliyan, Kec. Ngaliyan, Kota Semarang, Jawa Tengah 50184, Indonesia<br>
           Jam Operasional: Senin - Sabtu (08.30 - 17.00 WIB)<br>
           Hotline / WhatsApp Care: <strong>0812-3456-7890</strong>
         </div>
@@ -407,7 +407,7 @@ async function sendClaimRejectionEmail(claim) {
         </p>
       </div>
       <div class="footer">
-        Hotline WhatsApp: 0812-3456-7890 | Gedung Hayam Wuruk No. 127, Jakarta Pusat<br>
+        Hotline WhatsApp: 0812-3456-7890 | Blok 23A, Jl. Kw. Industri Candi Tahap V Jl. Gatot Subroto, Ngaliyan, Kec. Ngaliyan, Kota Semarang, Jawa Tengah 50184, Indonesia<br>
         &copy; 2026 Advan Indonesia. All rights reserved.
       </div>
     </div>
