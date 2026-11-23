@@ -50,8 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_vancare_sn ON vancare_claims(serial_number);
 
 -- Aktifkan Row Level Security (RLS) jika dibutuhkan
 ALTER TABLE vancare_claims ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.claims ENABLE ROW LEVEL SECURITY;
 
--- Policy untuk read & insert publik (Service Account / Anon Key)
-CREATE POLICY "Public read claims" ON vancare_claims FOR SELECT USING (true);
+-- Policy insert publik (Service Account / Anon Key)
 CREATE POLICY "Public insert claims" ON vancare_claims FOR INSERT WITH CHECK (true);
-CREATE POLICY "Public update claims" ON vancare_claims FOR UPDATE USING (true);
