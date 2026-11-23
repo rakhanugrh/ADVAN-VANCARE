@@ -555,12 +555,21 @@
     }
 
     async function uploadEvidenceFile(file, type, totalBytes, uploadedBytes, onProgress) {
+      let normalizedMimeType = file.type || 'application/octet-stream';
+      if (normalizedMimeType === 'application/octet-stream') {
+        const extension = file.name.toLowerCase().split('.').pop();
+        if (extension === 'heic') normalizedMimeType = 'image/heic';
+        if (extension === 'heif') normalizedMimeType = 'image/heif';
+        if (extension === 'jpg' || extension === 'jpeg') normalizedMimeType = 'image/jpeg';
+        if (extension === 'png') normalizedMimeType = 'image/png';
+        if (extension === 'webp') normalizedMimeType = 'image/webp';
+      }
       const sessionResponse = await fetch('/api/drive/init-upload', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           fileName: file.name,
-          mimeType: file.type || 'application/octet-stream',
+          mimeType: normalizedMimeType,
           fileSize: file.size,
           fileType: type
         })
@@ -609,7 +618,7 @@
         uploadToken: session.uploadToken,
         type,
         originalName: file.name,
-        mimeType: file.type || 'application/octet-stream',
+        mimeType: normalizedMimeType,
         size: file.size
       };
     }

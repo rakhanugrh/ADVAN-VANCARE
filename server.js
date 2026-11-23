@@ -63,7 +63,7 @@ const claimLimiter = rateLimit({
 });
 const driveUploadLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 10,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -84,6 +84,21 @@ const ALLOWED_CLAIM_MIME_TYPES = [
   'video/x-msvideo',
   'video/webm'
 ];
+
+function normalizeClaimMimeType(fileName, mimeType) {
+  const normalizedMime = typeof mimeType === 'string' ? mimeType.toLowerCase().trim() : '';
+  if (normalizedMime && normalizedMime !== 'application/octet-stream') {
+    return normalizedMime;
+  }
+
+  const extension = String(fileName || '').toLowerCase().split('.').pop();
+  if (extension === 'heic') return 'image/heic';
+  if (extension === 'heif') return 'image/heif';
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+  if (extension === 'png') return 'image/png';
+  if (extension === 'webp') return 'image/webp';
+  return normalizedMime || 'application/octet-stream';
+}
 
 // Middleware
 app.use(cors());
@@ -806,7 +821,8 @@ app.post('/api/admin/import-csv', requireAdminAuth, csvUpload.single('file'), as
 // Meminta sesi upload langsung ke Google Drive
 app.post('/api/drive/init-upload', driveUploadLimiter, async (req, res) => {
   try {
-    const { fileName, mimeType, fileSize, fileType } = req.body || {};
+    const { fileName, fileSize, fileType } = req.body || {};
+    const mimeType = normalizeClaimMimeType(fileName, req.body?.mimeType);
     if (typeof fileName !== 'string' || !fileName.trim() || fileName.trim().length > 255 ||
         typeof mimeType !== 'string' || !mimeType ||
         !['photo', 'video'].includes(fileType)) {
