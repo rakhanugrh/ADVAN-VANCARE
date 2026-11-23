@@ -196,11 +196,13 @@ function normalizeClaimRow(row) {
 
 function applyIdOrTicketFilter(query, idOrTicket) {
   const clean = String(idOrTicket).trim();
-  const isNumeric = /^\d+$/.test(clean);
-  if (isNumeric) {
-    return query.or(`id.eq.${clean},ticket_number.eq.${clean}`);
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean);
+  if (isUuid) {
+    return query.eq('id', clean);
   }
-  return query.eq('ticket_number', clean);
+  return /^\d+$/.test(clean)
+    ? query.eq('id', clean)
+    : query.eq('ticket_number', clean);
 }
 
 // ===============================================
@@ -299,11 +301,23 @@ async function getClaimById(idOrTicket) {
   if (supabase) {
     try {
       const table = await getTargetTable();
-      let query = supabase.from(table).select('*');
-      query = applyIdOrTicketFilter(query, idOrTicket);
+      const clean = String(idOrTicket).trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean);
 
-      const { data, error } = await query.maybeSingle();
-      if (!error && data) return normalizeClaimRow(data);
+      if (isUuid) {
+        const { data, error } = await supabase.from(table).select('*').eq('id', clean).maybeSingle();
+        if (!error && data) return normalizeClaimRow(data);
+      } else {
+        const ticketQuery = supabase.from(table).select('*').eq('ticket_number', clean).maybeSingle();
+        const ticketResult = await ticketQuery;
+        if (!ticketResult.error && ticketResult.data) return normalizeClaimRow(ticketResult.data);
+
+        if (/^\d+$/.test(clean)) {
+          const idQuery = supabase.from(table).select('*').eq('id', clean).maybeSingle();
+          const idResult = await idQuery;
+          if (!idResult.error && idResult.data) return normalizeClaimRow(idResult.data);
+        }
+      }
     } catch (err) {
       console.warn('[Supabase Fallback] Gagal getClaimById:', err.message);
     }
@@ -323,17 +337,19 @@ async function approveClaim(idOrTicket, notes = '') {
   if (supabase) {
     try {
       const table = await getTargetTable();
+      const resolvedClaim = await getClaimById(idOrTicket);
+      const targetId = resolvedClaim?.id || idOrTicket;
       let query = supabase.from(table).update({
         status: 'APPROVED',
         approved_at: approvedAt,
         admin_notes: notes
       });
-      query = applyIdOrTicketFilter(query, idOrTicket);
+      query = applyIdOrTicketFilter(query, targetId);
 
       let { data, error } = await query.select();
       if (error && error.code === 'PGRST204') {
         let retryQuery = supabase.from(table).update({ status: 'APPROVED' });
-        retryQuery = applyIdOrTicketFilter(retryQuery, idOrTicket);
+        retryQuery = applyIdOrTicketFilter(retryQuery, targetId);
         const retryRes = await retryQuery.select();
         data = retryRes.data;
         error = retryRes.error;
@@ -370,16 +386,18 @@ async function rejectClaim(idOrTicket, reason = '') {
   if (supabase) {
     try {
       const table = await getTargetTable();
+      const resolvedClaim = await getClaimById(idOrTicket);
+      const targetId = resolvedClaim?.id || idOrTicket;
       let query = supabase.from(table).update({
         status: 'REJECTED',
         rejected_reason: reason
       });
-      query = applyIdOrTicketFilter(query, idOrTicket);
+      query = applyIdOrTicketFilter(query, targetId);
 
       let { data, error } = await query.select();
       if (error && error.code === 'PGRST204') {
         let retryQuery = supabase.from(table).update({ status: 'REJECTED' });
-        retryQuery = applyIdOrTicketFilter(retryQuery, idOrTicket);
+        retryQuery = applyIdOrTicketFilter(retryQuery, targetId);
         const retryRes = await retryQuery.select();
         data = retryRes.data;
         error = retryRes.error;
