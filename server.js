@@ -146,6 +146,15 @@ function getLocalDateString() {
   return `${year}-${month}-${day}`;
 }
 
+function getJakartaDateString() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(new Date());
+}
+
 // ===============================================
 // SISTEM AUTENTIKASI ADMIN
 // ===============================================
@@ -157,7 +166,8 @@ const JWT_SECRET = process.env.SESSION_SECRET || 'vancare_advan_secret_session_2
 function generateAdminToken(username) {
   const payload = {
     username,
-    exp: Date.now() + 7 * 24 * 60 * 60 * 1000 // Berlaku 7 hari
+    loginDate: getJakartaDateString(),
+    exp: Date.now() + 7 * 24 * 60 * 60 * 1000
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = crypto.createHmac('sha256', JWT_SECRET).update(payloadB64).digest('base64url');
@@ -176,6 +186,7 @@ function verifyAdminToken(token) {
   try {
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
     if (payload.exp && Date.now() > payload.exp) return null;
+    if (!payload.loginDate || payload.loginDate !== getJakartaDateString()) return null;
     return payload;
   } catch (e) {
     return null;
